@@ -1,3 +1,6 @@
+For a demo jupyter notebook:
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/avicooper1/OOD_Orientation_Generalization/blob/master/demo/demo.ipynb)
+
 # Rotation Generalization
 
 This is a collection of tools to run experiments and evaluations for a project studying the ability of DCNN's to generalize to unseen poses of 3D objects.

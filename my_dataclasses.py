@@ -41,7 +41,7 @@ class ExpData:
 
     def __post_init__(self):
         self.name = f'Div{self.data_div}'
-        self.dir = f'/home/avic/om2/experiments_half/exp{self.num}'
+        self.dir = f'/home/avic/om2/experiments/exp{self.num}'
         self.logs_dir = os.path.join(self.dir, 'logs')
         self.eval_dir = os.path.join(self.dir, 'eval')
         self.stats_dir = os.path.join(self.dir, 'stats')
@@ -57,6 +57,7 @@ class ExpData:
         self.eval_heatmap = os.path.join(self.eval_dir, f'{self.name}_heatmap.npy')
         self.eval_heatmap_id = os.path.join(self.eval_dir, f'{self.name}_heatmap_id.npy')
         self.eval_heatmap_ood = os.path.join(self.eval_dir, f'{self.name}_heatmap_ood.npy')
+        self.activations_heatmap = os.path.join(self.eval_dir, f'{self.name}_activations.npy')
 
     def __str__(self):
         return self.__repr__()

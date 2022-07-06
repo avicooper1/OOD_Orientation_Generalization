@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy import linalg
+import pandas as pd
+from tqdm import tqdm
 
 itoaxis = {0:'object_x', 1:'object_y', 2:'object_z'}
 
@@ -77,3 +79,42 @@ def get_canonical_heatmaps(num_restricted_axis_bins, num_unrestricted_axis_bins,
 
     # return np.max(np.array([np.abs(rot[:, :, 0]), np.abs(rot_flipped[:, :, 0]),
     #        np.abs(np.pi-trace[:, :, 0])/np.pi, np.abs(np.pi-trace_flipped[:, :, 0])/np.pi]), axis=0)
+    
+    
+def get_heatmap_cell_ranges2(num_cubelets):
+
+    assert num_cubelets % 2 == 0
+    
+    longtitude = num_cubelets + 1
+    latitude = num_cubelets // 2
+    r = 1
+
+    dim0, delta_theta = np.linspace(-np.pi, np.pi, longtitude, retstep=True)
+    delta_S = delta_theta / latitude
+
+    dim1 = 1-np.arange(2*latitude+1) * delta_S / (r**2 * delta_theta)
+    dim1 =  np.arccos(dim1)
+    dim1 = (dim1 - (np.pi / 2))
+
+    dim2 = np.linspace(-np.pi, np.pi, num_cubelets + 1)
+
+    
+    return dim0, dim1, dim2
+
+def div_heatmap(df, activations, num_cubelets=20):
+    dim0s, dim1s, dim2s = get_heatmap_cell_ranges2(num_cubelets)
+
+    df['object_x_cat'] = pd.cut(df.object_x, dim0s).cat.codes
+    df['object_y_cat'] = pd.cut(df.object_y, dim1s).cat.codes
+    df['object_z_cat'] = pd.cut(df.object_z, dim2s).cat.codes
+    df['model_cats'] = pd.Categorical(df.model_name, categories=df.model_name.unique(), ordered=True).codes
+
+    groups = df.groupby([df.model_cats, df.object_x_cat, df.object_y_cat, df.object_z_cat])
+    groups_count = groups.ngroups
+    
+    activations_heatmap = np.zeros((512, 50, num_cubelets, num_cubelets, num_cubelets), dtype=np.float32)
+    for i, group in tqdm(enumerate(groups), total=groups_count):
+        m, x, y, z = group[0][0], group[0][1], group[0][2], group[0][3]
+        activations_heatmap[:, m, x, y, z] = np.mean(activations[group[1].index.tolist()], axis=0)
+
+    return activations_heatmap

@@ -39,12 +39,11 @@ def reorder_axes(axes, order):
         ret[order[i]] = axes[i]
     return ret
 
-def get_heatmap_cell_ranges(num_restricted_axis_bins, num_unrestricted_axis_bins):
-    assert num_restricted_axis_bins % 2 == 0
-    assert num_unrestricted_axis_bins % 2 == 0
+def get_heatmap_cell_ranges(num_cubelets):
+    assert num_cubelets % 2 == 0
     
-    longtitude = num_restricted_axis_bins + 1
-    latitude = num_restricted_axis_bins // 2
+    longtitude = num_cubelets + 1
+    latitude = num_cubelets // 2
     r = 1
 
     dim0, delta_theta = np.linspace(-np.pi, np.pi, longtitude, retstep=True)
@@ -54,11 +53,7 @@ def get_heatmap_cell_ranges(num_restricted_axis_bins, num_unrestricted_axis_bins
     dim1 =  np.arccos(dim1)
     dim1 = (dim1 - (np.pi / 2))
 
-    unrestricted_axis_range = np.pi
-    dim2 = np.linspace(-unrestricted_axis_range, unrestricted_axis_range, num_unrestricted_axis_bins + 1)
-
-    
-    return dim0, dim1, dim2
+    dim2 = np.linspace(-np.pi, np.pi, num_cubelets + 1)
 
 
     return list(enumerate(zip(dim0, dim0[1:]))), list(enumerate(zip(dim1, dim1[1:]))), list(enumerate(zip(dim2, dim2[1:])))
@@ -181,11 +176,11 @@ def get_all_non_bin_cubelets(num_cubelets=20):
         get_non_bin_cubelets(restriction_axes, num_cubelets, results[i])
 
     return ~results
-def get_heatmap(eval_df, results, num_images, num_bins, num_zs, images=None, img_boundary=55):
+def get_heatmap(eval_df, results, num_images, num_cubelets, images=None, img_boundary=55):
 
-    dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_bins, num_zs)
+    dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_cubelets)
     
-    for d2i, (d2s, d2e) in tqdm.tqdm(dim2s):
+    for d2i, (d2s, d2e) in dim2s:
             
             in_d2_range = eval_df[eval_df.object_z.between(d2s, d2e)]
             
@@ -201,11 +196,11 @@ def get_heatmap(eval_df, results, num_images, num_bins, num_zs, images=None, img
                         if images is not None:
                             images[d0i, d1i, d2i] = Image.open(in_d1_range.sample(n=1).iloc[0].image_name_x).convert('RGBA').crop((img_boundary, img_boundary, 224 - img_boundary, 224 - img_boundary)) if len(in_d1_range) > 0 else 0
                             
-def get_results(exp, num_bins, num_zs, get_images, distribution_status=0, model_num=None, img_boundary=55, object_scale=None):
+def get_results(exp, num_cubelets, get_images, img_boundary=55, object_scale=None):
     
-    results = np.zeros((num_bins, num_bins, num_zs))
+    results = np.zeros((num_cubelets, num_cubelets, num_cubelets))
     num_images = np.zeros((results.shape))
-    images = np.zeros((num_bins, num_bins, num_zs,  224 - (img_boundary * 2),  224 - (img_boundary * 2), 4)) if get_images else None
+    images = np.zeros((num_cubelets, num_cubelets, num_cubelets,  224 - (img_boundary * 2),  224 - (img_boundary * 2), 4)) if get_images else None
 
     if not os.path.exists(exp.eval):
         return None
@@ -214,41 +209,41 @@ def get_results(exp, num_bins, num_zs, get_images, distribution_status=0, model_
     classic_eval = pd.read_csv(exp.eval)
 
     eval_frame = testing.merge(right=classic_eval[classic_eval.epoch == max(classic_eval.epoch)], left_on='Unnamed: 0', right_on='Unnamed: 0')
-    if distribution_status > 0:
-        in_center_z = eval_frame.object_x.between(-0.25, 0.25) & eval_frame.object_y.between(-0.25, 0.25)
-        in_center_y = eval_frame.object_x.between(-0.25, 0.25) & eval_frame.object_z.between(-0.25, 0.25)
-        in_center_x = eval_frame.object_y.between(-0.25, 0.25) & eval_frame.object_z.between(-0.25, 0.25)
-        in_hole = eval_frame.object_x.between(-1.8, -1.3) & eval_frame.object_y.between(-0.25, 0.25)
-        if distribution_status == 1:
-            if exp.hole == 0:
-                if exp.restriction_axes == '(1, 2)':
-                    eval_frame = eval_frame[in_center_x]
-                if exp.restriction_axes == '(0, 2)':
-                    eval_frame = eval_frame[in_center_y]
-                if exp.restriction_axes == '(0, 1)':
-                    eval_frame = eval_frame[in_center_z]
-            if exp.hole == 1:
-                eval_frame = eval_frame[in_hole]
-            if exp.hole == 2:
-                eval_frame = eval_frame[in_center_z | in_hole]
-        if distribution_status == 2:
-            if exp.hole == 0:
-                if exp.restriction_axes == '(1, 2)':
-                    eval_frame = eval_frame[~in_center_x]
-                if exp.restriction_axes == '(0, 2)':
-                    eval_frame = eval_frame[~in_center_y]
-                if exp.restriction_axes == '(0, 1)':
-                    eval_frame = eval_frame[~in_center_z]
-            if exp.hole == 1:
-                eval_frame = eval_frame[~in_hole]
-            if exp.hole == 2:
-                eval_frame = eval_frame[~in_center_z & ~in_hole]
+    # if distribution_status > 0:
+    #     in_center_z = eval_frame.object_x.between(-0.25, 0.25) & eval_frame.object_y.between(-0.25, 0.25)
+    #     in_center_y = eval_frame.object_x.between(-0.25, 0.25) & eval_frame.object_z.between(-0.25, 0.25)
+    #     in_center_x = eval_frame.object_y.between(-0.25, 0.25) & eval_frame.object_z.between(-0.25, 0.25)
+    #     in_hole = eval_frame.object_x.between(-1.8, -1.3) & eval_frame.object_y.between(-0.25, 0.25)
+    #     if distribution_status == 1:
+    #         if exp.hole == 0:
+    #             if exp.restriction_axes == '(1, 2)':
+    #                 eval_frame = eval_frame[in_center_x]
+    #             if exp.restriction_axes == '(0, 2)':
+    #                 eval_frame = eval_frame[in_center_y]
+    #             if exp.restriction_axes == '(0, 1)':
+    #                 eval_frame = eval_frame[in_center_z]
+    #         if exp.hole == 1:
+    #             eval_frame = eval_frame[in_hole]
+    #         if exp.hole == 2:
+    #             eval_frame = eval_frame[in_center_z | in_hole]
+    #     if distribution_status == 2:
+    #         if exp.hole == 0:
+    #             if exp.restriction_axes == '(1, 2)':
+    #                 eval_frame = eval_frame[~in_center_x]
+    #             if exp.restriction_axes == '(0, 2)':
+    #                 eval_frame = eval_frame[~in_center_y]
+    #             if exp.restriction_axes == '(0, 1)':
+    #                 eval_frame = eval_frame[~in_center_z]
+    #         if exp.hole == 1:
+    #             eval_frame = eval_frame[~in_hole]
+    #         if exp.hole == 2:
+    #             eval_frame = eval_frame[~in_center_z & ~in_hole]
 
-    if model_num is not None:
-        all_models = eval_frame.model_name.unique()
-        eval_frame = eval_frame[eval_frame.model_name == all_models[model_num]]
+    # if model_num is not None:
+    #     all_models = eval_frame.model_name.unique()
+    #     eval_frame = eval_frame[eval_frame.model_name == all_models[model_num]]
         
-    if object_scale is not None:
-        eval_frame = eval_frame[eval_frame.object_scale.between(object_scale[0], object_scale[1])]
-    get_heatmap(eval_frame, results, num_images, num_bins, num_zs, images, img_boundary)
+    # if object_scale is not None:
+    #     eval_frame = eval_frame[eval_frame.object_scale.between(object_scale[0], object_scale[1])]
+    get_heatmap(eval_frame, results, num_images, num_cubelets, images, img_boundary)
     return exp, results, num_images, images

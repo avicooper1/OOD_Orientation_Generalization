@@ -58,9 +58,11 @@ def get_heatmap_cell_ranges(num_cubelets):
 
     return list(enumerate(zip(dim0, dim0[1:]))), list(enumerate(zip(dim1, dim1[1:]))), list(enumerate(zip(dim2, dim2[1:])))
 
-def twod_alginment(v1, v2):
+def twod_alginment(v1, v2, flip):
     r1 = R.from_euler('zyx', v1[-1::-1])
     r2 = R.from_euler('zyx', v2[-1::-1])
+    if flip:
+        r2 = R.from_euler('zyx', [np.pi, 0, 0]) * r2
     r3 = r2*r1.inv()
     a = r3.as_matrix()
     
@@ -81,26 +83,25 @@ def canonical_processing(d2i, d2, d0i, d0, d1i, d1, bin_rotations):
 
     v2 = (range_mid(d0), range_mid(d1), range_mid(d2))
 
-    intermed_results = np.empty((2, bin_rotations.shape[0]))
+    intermed_results = np.empty((4, bin_rotations.shape[0]))
     for index, v1 in enumerate(bin_rotations):
-        intermed_results[:2, index] = twod_alginment(v1, v2)
-        v1_flipped = (v1[0] - np.pi, v1[1], v1[2])
-        # intermed_results[2:, index] = twod_alginment(v1_flipped, v2)
+        intermed_results[:2, index] = twod_alginment(v1, v2, False)
+        intermed_results[2:, index] = twod_alginment(v1, v2, True)
     return d0i, d1i, d2i, np.max(intermed_results, axis=1)
 
 
-def get_canonical_heatmaps(num_bins, unrestricted_axis, hole):
+def get_canonical_heatmaps(num_cubelets, unrestricted_axis, hole):
 
-    dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_bins, num_bins)
+    dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_cubelets)
 
-    A = np.zeros((num_bins, num_bins, num_bins))
+    A = np.zeros((num_cubelets, num_cubelets, num_cubelets))
     E = np.zeros(A.shape)
+    A_flipped = np.zeros(A.shape)
     E_flipped = np.zeros(E.shape)
-    # A_flipped = np.zeros(E.shape)
     
     final_dim = dim2s if unrestricted_axis == 2 else dim1s if unrestricted_axis == 1 else dim0s
-    center_points = np.array([[0,0],[-0.2,-0.2],[-0.2,0.2],[0.2,-0.2],[0.2,0.2]])
-    hole_points = np.array([[-1.55,0],[-1.75,-0.2],[-1.75,0.2],[-1.25,-0.2],[-1.25,0.2]])
+    center_points = np.stack(np.moveaxis(np.meshgrid(np.linspace(-0.25, 0.25, 5), np.linspace(-0.25, 0.25, 5)), 0, 2)).reshape(-1, 2)
+    hole_points = np.stack(np.moveaxis(np.meshgrid(np.linspace(-1.8, -1.3, 5), np.linspace(-0.25, 0.25, 5)), 0, 2)).reshape(-1, 2)
     if hole == 0:
         v_1_combinations = center_points
     elif hole == 1:
@@ -108,33 +109,22 @@ def get_canonical_heatmaps(num_bins, unrestricted_axis, hole):
     elif hole == 2:
         v_1_combinations = np.vstack((center_points, hole_points))
         
-    bin_rotations = np.repeat(np.insert(v_1_combinations, unrestricted_axis, None, axis=1), len(final_dim), axis=0).reshape(v_1_combinations.shape[0],num_bins,3)
+    bin_rotations = np.repeat(np.insert(v_1_combinations, unrestricted_axis, None, axis=1), len(final_dim), axis=0).reshape(v_1_combinations.shape[0],num_cubelets,3)
     bin_rotations[:,:,unrestricted_axis] = [range_mid(r[1]) for r in final_dim]
     bin_rotations = bin_rotations.reshape(-1,3)
-
-    # for d2i, d2 in tqdm.tqdm(dim2s):
-    #     for d0i, d0 in dim0s:
-    #         for d1i, d1 in dim1s:
-    #             v2 = (range_mid(d0), range_mid(d1), range_mid(d2))
-    #
-    #             intermed_results = np.empty((bin_rotations.shape[0], 2))
-    #             for index, v1 in enumerate(bin_rotations):
-    #                 intermed_results[index] = twod_alginment(v1, v2)
-    #
-    #             A[d0i, d1i, d2i] = np.max(intermed_results[:, 0])
-    #             E[d0i, d1i, d2i] = np.max(intermed_results[:, 1])
 
     iterator = [(d2i, d2, d0i, d0, d1i, d1, bin_rotations) for d2i, d2 in dim2s for d0i, d0 in dim0s for d1i, d1 in dim1s]
 
     with Pool(20) as pool:
         for result in tqdm.tqdm(pool.istarmap(canonical_processing, iterator), total=len(iterator)):
-            d0i, d1i, d2i, (A_max, E_max) = result
-            A[d0i, d1i, d2i] = A_max #max(A_max, A_flipped_max)
-            E[d0i, d1i, d2i] = E_max #max(E_max, E_flipped_max)
-            # A_flipped[d0i, d1i, d2i] = A_flipped_max
-            # E_flipped[d0i, d1i, d2i] = E_flipped_max
+    # for result in map(lambda x: canonical_processing(*x), iterator):
+            d0i, d1i, d2i, (A_max, E_max, A_flipped_max, E_flipped_max) = result
+            A[d0i, d1i, d2i] = A_max
+            E[d0i, d1i, d2i] = E_max
+            A_flipped[d0i, d1i, d2i] = A_flipped_max
+            E_flipped[d0i, d1i, d2i] = E_flipped_max
 
-    return A, E
+    return A, E, A_flipped, E_flipped
 
 def get_and_set_all_canonical_heatmaps():
     for axis, hole in [(0,0), (1,0), (2,0), (2,1), (2,2)]:
@@ -142,40 +132,64 @@ def get_and_set_all_canonical_heatmaps():
         set_generated_canonical_heatmap(heatmap, axis+hole)
 
 def get_generated_canonical_heatmap(unrestricted_axis):
-    return np.load(f'/home/avic/Rotation-Generalization/notebooks/canonical_{["x","y","z","hole1","hole2"][unrestricted_axis]}_unrestricted_heatmap.npy')
+    return np.load(f'/home/avic/OOD_Orientation_Generalization/notebooks/canonical_{["x","y","z","hole1","hole2"][unrestricted_axis]}_unrestricted_heatmap.npy')
 
 def set_generated_canonical_heatmap(arr, i):
-    return np.save(f'/home/avic/Rotation-Generalization/notebooks/canonical_{["x","y","z","hole1","hole2"][i]}_unrestricted_heatmap.npy', arr)
+    return np.save(f'/home/avic/OOD_Orientation_Generalization/notebooks/canonical_{["x","y","z","hole1","hole2"][i]}_unrestricted_heatmap.npy', arr)
 
 def get_all_generated_canonical_heatmaps():
     return np.array([get_generated_canonical_heatmap(i) for i in range(5)])
 
-def overlap(a, b):
-    return int(min(a[1], b[1]) - max(a[0], b[0]) > 0)
-
-def get_non_bin_cubelets(bins, num_cubelets, return_array):
-    dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_cubelets, num_cubelets)
-
-    for d2i, d2r in dim2s:
-        for d0i, d0r in dim0s:
-            for d1i, d1r in dim1s:
-                for bin in bins:
-                    if overlap(bin[0], d0r) + overlap(bin[1], d1r) + overlap(bin[2], d2r) == 2:
-                        return_array[d0i, d1i, d2i] = True
-
 def get_all_non_bin_cubelets(num_cubelets=20):
-    xy = [[(-0.25, 0.25), (-0.25, 0.25), (0, 0)]]
-    xz = [[(-0.25, 0.25), (0, 0), (-0.25, 0.25)]]
-    yz = [[(0, 0), (-0.25, 0.25), (-0.25, 0.25)]]
-    hole = [[(-1.8, -1.3), (-0.25, 0.25), (0,0)]]
-    hole_center = [[(-0.25, 0.25), (-0.25, 0.25), (0, 0)], [(-1.8, -1.3), (-0.25, 0.25), (0,0)]]
-    all_restriction_axes = [yz, xz, xy, hole, hole_center]
+    dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_cubelets)
 
-    results = np.zeros((5, num_cubelets, num_cubelets, num_cubelets), dtype=bool)
-    for i, restriction_axes in enumerate(all_restriction_axes):
-        get_non_bin_cubelets(restriction_axes, num_cubelets, results[i])
+    r = [-0.25, 0.25]
+    u = [-5, 5]
 
-    return ~results
+    bins = np.array([
+        [u, r, r],
+        [r, u, r],
+        [r, r, u],
+        [[-1.8, -1.3], r, u]
+    ])
+
+    def bin_in_range(r, b):
+        return (b[0] < r[0] < b[1]) | (b[0] < r[1] < b[1])
+
+    def cubelet_in_bin(d0, d1, d2, b):
+        return bin_in_range(d0, b[0]) & bin_in_range(d1, b[1]) & bin_in_range(d2, b[2])
+
+    bin_masks = np.zeros((5, 20, 20, 20)).astype(bool)
+    bin_flip_masks = np.zeros((5, 20, 20, 20)).astype(bool)
+    for d2i, d2r in dim2s:
+            for d0i, d0r in dim0s:
+                for d1i, d1r in dim1s:
+                    for bi, bin_range in enumerate(bins):
+                        c_in_b = cubelet_in_bin(d0r, d1r, d2r, bin_range)
+                        bin_masks[bi, d0i, d1i, d2i] = c_in_b
+                        if c_in_b:
+                            vec = R.from_euler('zyx', [range_mid(d0r), range_mid(d1r), range_mid(d2r)][-1::-1])
+                            flip_bin_range = R.as_euler(R.from_euler('zyx', [np.pi, 0, 0]) * vec, 'zyx')[-1::-1]
+                            flip_bin_range += ((flip_bin_range < 0) * 0.05) - 0.025
+                            flip_bin_range += np.array([3.1415, 1.57, 3.1415])
+                            flip_bin_index = flip_bin_range / np.array([6.2831, 3.1415, 6.2831])
+                            flip_bin_index *= num_cubelets
+                            flip_bin_index = np.floor(flip_bin_index).astype(int)
+                            bin_flip_masks[bi, flip_bin_index[0], flip_bin_index[1], flip_bin_index[2]] = True
+    bin_masks[4] = bin_masks[2] | bin_masks[3]
+    
+    return bin_masks, bin_flip_masks
+
+def get_bin_mask(unrestricted_axis):
+    return np.load(f'/home/avic/OOD_Orientation_Generalization/notebooks/{["x","y","z","hole1","hole2"][unrestricted_axis]}_bin_mask.npy')
+
+def set_bin_mask(arr, flip=False):
+    for i in range(5):
+        np.save(f'/home/avic/OOD_Orientation_Generalization/notebooks/{["x","y","z","hole1","hole2"][i]}_bin_{"flip_" if flip else ""}mask.npy', arr[i])
+
+def get_all_bin_masks():
+    return np.array([get_bin_mask(i) for i in range(5)])
+
 def get_heatmap(eval_df, results, num_images, num_cubelets, images=None, img_boundary=55):
 
     dim0s, dim1s, dim2s = get_heatmap_cell_ranges(num_cubelets)
@@ -247,3 +261,41 @@ def get_results(exp, num_cubelets, get_images, img_boundary=55, object_scale=Non
     #     eval_frame = eval_frame[eval_frame.object_scale.between(object_scale[0], object_scale[1])]
     get_heatmap(eval_frame, results, num_images, num_cubelets, images, img_boundary)
     return exp, results, num_images, images
+
+def get_heatmap_cell_ranges2(num_cubelets):
+
+    assert num_cubelets % 2 == 0
+    
+    longtitude = num_cubelets + 1
+    latitude = num_cubelets // 2
+    r = 1
+
+    dim0, delta_theta = np.linspace(-np.pi, np.pi, longtitude, retstep=True)
+    delta_S = delta_theta / latitude
+
+    dim1 = 1-np.arange(2*latitude+1) * delta_S / (r**2 * delta_theta)
+    dim1 =  np.arccos(dim1)
+    dim1 = (dim1 - (np.pi / 2))
+
+    dim2 = np.linspace(-np.pi, np.pi, num_cubelets + 1)
+
+    
+    return dim0, dim1, dim2
+
+def div_heatmap(df, activations, num_cubelets=20):
+    dim0s, dim1s, dim2s = get_heatmap_cell_ranges2(num_cubelets)
+
+    df['object_x_cat'] = pd.cut(df.object_x, dim0s).cat.codes
+    df['object_y_cat'] = pd.cut(df.object_y, dim1s).cat.codes
+    df['object_z_cat'] = pd.cut(df.object_z, dim2s).cat.codes
+    df['model_cats'] = pd.Categorical(df.model_name, categories=df.model_name.unique(), ordered=True).codes
+
+    groups = df.groupby([df.model_cats, df.object_x_cat, df.object_y_cat, df.object_z_cat])
+    groups_count = groups.ngroups
+    
+    activations_heatmap = np.zeros((512, 50, num_cubelets, num_cubelets, num_cubelets), dtype=np.float32)
+    for i, group in tqdm(enumerate(groups), total=groups_count):
+        m, x, y, z = group[0][0], group[0][1], group[0][2], group[0][3]
+        activations_heatmap[:, m, x, y, z] = np.mean(activations[group[1].index.tolist()], axis=0)
+
+    return activations_heatmap

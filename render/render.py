@@ -151,7 +151,7 @@ with open(DD.annotation_path_i(MODEL_I), 'a') as d:
         writer.writerow(header)
 
     for i in range(IMAGES_OFFSET, NUM_IMAGES_TO_GENERATE):
-        time.sleep(0.05)
+        # time.sleep(0.05)
         obj_pose = R.random().as_euler('zyx')
         if not DD.type == DatasetType.Full:
             while not (BIN_RANGE[0][0] <= obj_pose[DD.restriction_axes[0]] <= BIN_RANGE[0][1] and BIN_RANGE[1][0] <= obj_pose[

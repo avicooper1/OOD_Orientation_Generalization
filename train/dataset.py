@@ -5,7 +5,7 @@ from torchvision import transforms
 import numpy as np
 
 import sys
-sys.path.append('/home/avic/Rotation-Generalization')
+sys.path.append('/home/avic/OOD_Orientation_Generalization')
 from my_dataclasses import *
 
 class RotationDataset:
@@ -90,7 +90,7 @@ class RotationDataset:
         training_models_validation_frame = self.training.bin.ann[self.training.bin.ann.model_name.isin(self.training_models)]
         held_models_validation_frame = self.training.full.ann[self.training.full.ann.model_name.isin(self.held_models)]
 
-        testing_frame = self.testing.full.ann[self.testing.full.ann.model_name.isin(self.testing_models)]
+        testing_frame = self.testing.full.ann#[self.testing.full.ann.model_name.isin(self.testing_models)]
 
         return Splits(dataloader(training_frame, shuffle=True), dataloader(testing_frame, save_frame=True), dataloader(training_models_validation_frame, sample=True), dataloader(held_models_validation_frame, sample=True))
 

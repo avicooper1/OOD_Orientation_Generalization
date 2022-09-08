@@ -106,16 +106,9 @@ def compute_fit(i, exp, scale_index=None):
                               (0, 10), (0, 1), (10, 10),
                               (0, 10), (0, 1), (10, 10)], polish=False)
 
-    ret.extend([None, None, None])
     ret.append(gpu_pred_all_components(result.x, [0]))
-    
-    ret.extend([None, None, None])
     ret.append(gpu_pred_all_components(result.x, [1]))
-    
-    ret.extend([None, None, None])
     ret.append(gpu_pred_all_components(result.x, [0, 1]))
-    
-    ret.extend([None, None, None])
     ret.append(gpu_pred_all_components(result.x, [2, 3]))
     
     ret.extend(result.x)
@@ -145,7 +138,7 @@ if __name__ == '__main__':
         exps_and_fits = zip(exps_frames_paths, fits_path)
 
         if not SCALE:
-            fits_cols = 'num,data_div,unrestricted_axis,U0,U1,U2,UC,A0,A1,A2,AC,E0,E1,E2,EC,Af0,Af1,Af2,AfC,Ef0,Ef1,Ef2,EfC,CA0,CA1,CA2,CE0,CE1,CE2,CAf0,CAf1,CAf2,CEf0,CEf1,CEf2,CC\n'
+            fits_cols = 'num,data_div,unrestricted_axis,U0,U1,U2,UC,AC,EC,AEC,AfEfC,CA0,CA1,CA2,CE0,CE1,CE2,CAf0,CAf1,CAf2,CEf0,CEf1,CEf2,CC\n'
         else:
             fits_cols = 'num,data_div,unrestricted_axis,scale_index,A_fit_arg0,A_fit_arg1,A_fit,E_fit_arg0,E_fit_arg1,E_fit,AE_fit_arg0,AE_fit_arg1,AE_fit_arg2,AE_fit_arg3,AE_fit\n'
 

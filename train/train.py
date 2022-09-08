@@ -4,7 +4,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
 import sys
-sys.path.append('/home/avic/Rotation-Generalization')
+sys.path.append('/home/avic/OOD_Orientation_Generalization')
 from my_dataclasses import *
 
 def train(model, dataset, criterion, optimizer, exp_data: ExpData, epoch_start, epoch_end, topk=False):

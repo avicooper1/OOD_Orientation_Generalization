@@ -9,16 +9,16 @@ import tqdm
 import json
 
 import sys
-sys.path.append('/home/avic/Rotation-Generalization')
+sys.path.append('/home/avic/OOD_Orientation_Generalization')
 from dataset import RotationDataset
 from my_dataclasses import ExpData, ModelType
-from my_models.C8SteerableCNN import C8SteerableCNN
-from my_models.CORnet_S import CORnet_S
+#from my_models.C8SteerableCNN import C8SteerableCNN
+#from my_models.CORnet_S import CORnet_S
 
-with open('/home/avic/Rotation-Generalization/train/remaining_jobs.json') as remaining_jobs_file:
-    remaining_jobs = json.load(remaining_jobs_file)
-JOB_ID = remaining_jobs[int(sys.argv[-1])]
-
+#with open('/home/avic/Rotation-Generalization/train/remaining_jobs.json') as remaining_jobs_file:
+#    remaining_jobs = json.load(remaining_jobs_file)
+#JOB_ID = remaining_jobs[int(sys.argv[-1])]
+JOB_ID = int(sys.argv[-1])
 EXP_DATA = ExpData.get_experiments(JOB_ID)
 
 dataset = RotationDataset(EXP_DATA)

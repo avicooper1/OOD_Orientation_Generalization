@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --array=[0]
-#SBATCH --time 20:00:00
+#SBATCH --array=[0,1,2,3]
+#SBATCH --time 02:00:00
 #SBATCH -n 1
 #SBATCH --mem=25G
 
@@ -17,4 +17,4 @@ hostname
 nvidia-smi
 module load openmind/singularity/3.5.0
 singularity exec --nv -B /om2:/om2 -B /om5:/om5 /home/avic/om5/pytorch.simg \
-python -u /home/avic/Rotation-Generalization/train/run.py ${SLURM_ARRAY_TASK_ID}
+python -u /home/avic/OOD_Orientation_Generalization/train/run.py ${SLURM_ARRAY_TASK_ID}

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=[163,320,321,322,323]
+#SBATCH --array=[0,1,2,3]
 #SBATCH --time 01:00:00
 #SBATCH -n 4
 #SBATCH --mem=8G

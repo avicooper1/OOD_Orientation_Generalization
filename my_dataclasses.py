@@ -103,7 +103,7 @@ class ExpData:
             restriction_axes=((0, 1), (1, 2), (0, 2))[axes_i if axes_i <= 2 else 0],
             lr=[0.001, 0.001, 0.001, 0.0001, 0.0001, None, 0.001][model_i],
             batch_size=[230, 64, 90, 128, 52, 128, 52][model_i],
-            max_epoch=[10,10,10,10,25,10,10][model_i])
+            max_epoch=[13,10,10,10,25,10,10][model_i])
         return None if ret.pretrained and not (ret.model_type == ModelType.ResNet or ret.model_type == ModelType.CorNet) else ret
 
 

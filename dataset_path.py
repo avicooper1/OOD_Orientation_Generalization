@@ -9,7 +9,7 @@ class DatasetType(Enum):
     NonBin = 3
 
 @dataclass
-class DatasetPath:
+class DatasetPathOLD:
     model_category: str
     type: DatasetType
     scale: bool

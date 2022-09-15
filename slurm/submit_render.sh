@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH --array=[1745,1748,1966,1971,1976,1978,1979,1981,1982,1983,1984,1985,1992,1995,1996,1999]
-#SBATCH -t 06:00:00
+#SBATCH --array=0-199
+#SBATCH -t 05:00:00
 #SBATCH -n 1
-#SBATCH --gres=gpu:1
-#SBATCH --exclude node093,node094,node097
-#SBATCH --constraint=any-gpu
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=1G
+#SBATCH --exclude node109,node112,node113,node106,node102
 #SBATCH --mail-type=END
 #SBATCH --mail-user=avic@mit.edu
-#SBATCH --output=/home/avic/om5/render_logs/R%A_%a.out
-#SBATCH --error=/home/avic/om5/render_logs/R%A_%a.err
+#SBATCH --output=/home/avic/om2/logs/render/R%A_%a.out
+#SBATCH --error=/home/avic/om2/logs/render/R%A_%a.err
 #SBATCH --partition=normal
 
 hostname
 nvidia-smi
-~/blender -b -noaudio -P /home/avic/Rotation-Generalization/render/render.py ${SLURM_ARRAY_TASK_ID}
+~/om2/software/blender/blender -b -noaudio -P ~/OOD_Orientation_Generalization/render/render.py /home/avic/om2/OODOG 32 ${SLURM_ARRAY_TASK_ID}

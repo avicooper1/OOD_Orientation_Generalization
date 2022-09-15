@@ -1,9 +1,20 @@
 import os
-from dataset_path import DatasetPath, DatasetType
-from torch.utils.data import Dataset, DataLoader
 from dataclasses import dataclass
 from enum import Enum
+import numpy as np
 import pandas as pd
+import json
+from ast import literal_eval
+
+import importlib.util
+torch_avail = importlib.util.find_spec("torch")
+if importlib.util.find_spec("torch"):
+    from torch.utils.data import Dataset, DataLoader
+
+import sys
+sys.path.append('/home/avic/OOD_Orientation_Generalization')
+from dataset_path import DatasetPathOLD, DatasetType
+
 
 def format_vars(obj):
     out = ''
@@ -11,6 +22,100 @@ def format_vars(obj):
     for k in obj_vars:
         out += f'{k} : {obj_vars[k]}\n'
     return out
+
+@dataclass
+class PersistentDataClass:
+
+    def save(self):
+        with open(self.store_path, 'w') as f:
+            json.dump(vars(self), f, ensure_ascii=False)
+
+    def load(self):
+        if os.path.exists(self.store_path):
+            with open(self.store_path, 'r') as f:
+                data = json.load(f)
+            for key, val in data.items():
+                setattr(self, key, val)
+
+
+
+
+@dataclass
+class DatasetPath(PersistentDataClass):
+    root_path: str
+    model_category: str
+    resolution: int
+    complete: bool
+    images_compressed: bool
+
+    def __post_init__(self):
+        self.path = self.__repr__()
+        self.image_dir = os.path.join(self.path, 'images')
+        self.store_path = os.path.join(self.path, 'configuration.json')
+
+        os.makedirs(self.path, exist_ok=True)
+        os.makedirs(self.image_dir, exist_ok=True)
+
+    def __repr__(self):
+        return os.path.join(self.root_path, f'datasets{self.resolution}x{self.resolution}', self.model_category)
+
+    def annotation_path(self, i):
+        return os.path.join(self.__repr__(), f'{self.model_category}{i}_dataset.csv')
+
+    def annotation_file(self, i):
+        df_file_path = self.annotation_path(i)
+        if os.path.exists(df_file_path):
+            df = pd.read_csv(df_file_path, converters={"cubelet_i": literal_eval}, delimiter=';')
+            df.cubelet_i = df.cubelet_i.apply(np.array)
+            return df
+
+    # This function checks if a specific subdataset is finished rendering. It will return the index of the next cubelet to be rendered, or -1 if all cubelets are finished
+    def check_annotation_file(self, i):
+        df = self.annotation_file(i)
+        if df is not None and len(df) > 0:
+            last_cubelet = df.cubelet_i.iloc[-1]
+            if np.all(last_cubelet == self.resolution - 1):
+                return -1
+            else:
+                return np.ravel_multi_index(last_cubelet, (self.resolution, self.resolution, self.resolution))
+        return 0
+
+    def annotations_paths(self):
+        return [self.annotation_path(i) for i in range(50)]
+
+    def merged_annotation_path(self):
+        return os.path.join(self.__repr__(), 'merged_dataset.csv')
+
+    def image_file_name(self, model_i, cubelet_i):
+        return os.path.join(self.image_dir, f'{self.model_category}_{model_i}_{cubelet_i}.png')
+
+    @classmethod
+    def get_dataset(cls, root_path, i, resolution):
+        return cls(root_path, ['plane', 'car', 'lamp', 'SM'][i], resolution, False, False)
+
+# @dataclass
+# class AnnotationFrame:
+#     dataset_path: DatasetPath
+#     i: int
+#
+#     def __post_init__(self):
+#         self.load()
+#
+#     def load(self):
+#         df_file_path = self.dataset_path.annotation_path(self.i)
+#         if os.path.exists(df_file_path):
+#             df = pd.read_csv(df_file_path, converters={"cubelet_i": literal_eval})
+#             df.cubelet_i = df.cubelet_i.apply(np.array)
+#             df['image_name_without_directory'] = df.image_name
+#             df.image_name = df.image_name.apply(lambda n: os.path.join(self.image_dir, n))
+#             self.df = df
+#         else:
+#             self.df = None
+#
+#     def save(self):
+
+
+
 
 class ModelType(Enum):
     ResNet = 0 #Batch size: 230, Learning rate: 0.001
@@ -114,7 +219,7 @@ class _Ann:
     dataset_type: DatasetType
 
     def __post_init__(self):
-        self.path = DatasetPath(self.category, self.dataset_type, self.exp_data.scale, self.exp_data.restriction_axes)
+        self.path = DatasetPathOLD(self.category, self.dataset_type, self.exp_data.scale, self.exp_data.restriction_axes)
         self.ann = pd.read_csv(self.path.merged_annotation_path())
         self.models = self.ann.model_name.unique()
 
@@ -139,23 +244,23 @@ class Ann:
 
 
 
-@dataclass
-class Splits:
-    training: DataLoader
-    testing: DataLoader
-    training_validation: DataLoader
-    held_validation: DataLoader
-    names = ('Training', 'Testing', 'Training Validation', 'Held Validation')
-
-    def __post_init__(self):
-        self.all_loaders = (self.training, self.testing, self.training_validation, self.held_validation)
-        if self.held_validation is not None:
-            self.all_loaders_named = list(zip(self.all_loaders, self.names))
-        else:
-            self.all_loaders_named = list(zip(self.all_loaders[:-1], self.names[:-1]))
-
-    def __repr__(self):
-        out = ''
-        for loader, name in self.all_loaders_named:
-            out += f'{len(loader.dataset)} {name} images \n'
-        return out
+# @dataclass
+# class Splits:
+#     training: DataLoader
+#     testing: DataLoader
+#     training_validation: DataLoader
+#     held_validation: DataLoader
+#     names = ('Training', 'Testing', 'Training Validation', 'Held Validation')
+#
+#     def __post_init__(self):
+#         self.all_loaders = (self.training, self.testing, self.training_validation, self.held_validation)
+#         if self.held_validation is not None:
+#             self.all_loaders_named = list(zip(self.all_loaders, self.names))
+#         else:
+#             self.all_loaders_named = list(zip(self.all_loaders[:-1], self.names[:-1]))
+#
+#     def __repr__(self):
+#         out = ''
+#         for loader, name in self.all_loaders_named:
+#             out += f'{len(loader.dataset)} {name} images \n'
+#         return out

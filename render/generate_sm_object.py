@@ -18,7 +18,7 @@ def gen_stim_id():
             stim_id += f'{direction}_{step}_{last_direction}_{-last_step}_'
             last_was_block = True
         else:
-            step = random.choice([y for y in range(-4,5) if y < -1 or y > 1])
+            step = random.choice([y for y in range(-4, 5) if y < -1 or y > 1])
             last_step = step
             stim_id += f'{direction}_{step}_'
             if last_direction:
@@ -26,26 +26,6 @@ def gen_stim_id():
             last_direction = directions.pop(directions.index(direction))
             last_was_block = False
     return stim_id[:-1]
-
-
-# stim_ids = [
-#     "x_3_y_2_z_3_x_2",
-#     "x_3_y_2_z_3_x_-2",
-#     "x_3_y_2_z_2_x_3",
-#     "x_3_y_2_z_2_x_-3",
-#     "x_2_y_3_z_3_x_2",
-#     "x_2_y_3_z_3_x_-2",
-#     "x_2_y_3_z_2_x_3",
-#     "x_2_y_3_z_2_x_-3",
-#     "x_3_y_2_z_3_y_2",
-#     "x_3_y_2_z_3_y_-2",
-#     "x_3_y_2_z_2_y_3",
-#     "x_3_y_2_z_2_y_-3",
-#     "x_2_y_3_z_3_y_2",
-#     "x_2_y_3_z_3_y_-2",
-#     "x_2_y_3_z_2_y_3",
-#     "x_2_y_3_z_2_y_-3"
-# ]
 
 stim_ids = [
      'z_2_y_-3_x_-4_z_-1_x_4_z_4',
@@ -147,16 +127,7 @@ def parse_stim_id(stim_id):
 def new_stimulus(stim_id):
     scene = bpy.data.scenes["Scene"]
 
-    # create the first cube
-    # bpy.ops.mesh.primitive_cube_add()
     cube = bpy.data.objects["Cube"]
-
-    # add a bevel to the cube object
-    cube.select_set(state=True)
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.bevel(offset_type='PERCENT', offset=3, segments=15)
-    bpy.ops.object.mode_set(mode='OBJECT')
-    cube.select_set(state=False)
 
     # parse the stim id into block locations
     block_locs = parse_stim_id(stim_id)
@@ -187,16 +158,4 @@ def new_stimulus(stim_id):
     bpy.ops.mesh.remove_doubles()
     bpy.ops.object.editmode_toggle()
 
-    # reset the center to center of mass, and move to the origin
-    stim = bpy.context.view_layer.objects.active
-    bpy.context.scene.cursor.location = (0, 0, 0)
-    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
-    assert list(stim.location) == [0, 0, 0]
-
-    stim.scale = 0.05, 0.05, 0.05
-
-    # set the new name
-    stim.name = stim_id
-    stim.data.name = stim_id
-
-    return stim
+    return bpy.context.view_layer.objects.active

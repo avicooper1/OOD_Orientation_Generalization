@@ -1,13 +1,14 @@
 import numpy as np
-from scipy.spatial.transform import Rotation as R
-from scipy import linalg
-import pandas as pd
+# from scipy.spatial.transform import Rotation as R
+# from scipy import linalg
+# import pandas as pd
 import os
-import tqdm
+# import tqdm
 from multiprocessing import Pool
-from PIL import Image
-from sklearn.preprocessing import normalize
+# from PIL import Image
+# from sklearn.preprocessing import normalize
 import istarmap
+import itertools
 
 def my_normalize(arr):
     arr_shape = arr.shape
@@ -262,25 +263,25 @@ def get_results(exp, num_cubelets, get_images, img_boundary=55, object_scale=Non
     get_heatmap(eval_frame, results, num_images, num_cubelets, images, img_boundary)
     return exp, results, num_images, images
 
-def get_heatmap_cell_ranges2(num_cubelets):
+def get_heatmap_cell_ranges2(num_cubelets, as_ranges=True):
 
     assert num_cubelets % 2 == 0
     
-    longtitude = num_cubelets + 1
     latitude = num_cubelets // 2
-    r = 1
 
-    dim0, delta_theta = np.linspace(-np.pi, np.pi, longtitude, retstep=True)
+    dim0, delta_theta = np.linspace(-np.pi, np.pi, num_cubelets + 1, retstep=True)
     delta_S = delta_theta / latitude
 
-    dim1 = 1-np.arange(2*latitude+1) * delta_S / (r**2 * delta_theta)
-    dim1 =  np.arccos(dim1)
+    dim1 = 1-np.arange(2*latitude+1) * delta_S / (2 * delta_theta)
+    dim1 = np.arccos(dim1)
     dim1 = (dim1 - (np.pi / 2))
 
     dim2 = np.linspace(-np.pi, np.pi, num_cubelets + 1)
 
-    
-    return dim0, dim1, dim2
+    if as_ranges:
+        return np.array(list(itertools.product(*[np.stack([vs[:-1], vs[1:]]).T for vs in [dim0, dim1, dim2]]))).reshape(num_cubelets, num_cubelets, num_cubelets ,3, 2)
+    else:
+        return dim0, dim1, dim2
 
 def div_heatmap(df, activations, num_cubelets=20):
     dim0s, dim1s, dim2s = get_heatmap_cell_ranges2(num_cubelets)

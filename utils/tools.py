@@ -1,18 +1,44 @@
 import numpy as np
-# from scipy.spatial.transform import Rotation as R
-# from scipy import linalg
-# import pandas as pd
+from scipy.spatial.transform import Rotation as R
+from scipy import linalg
+import pandas as pd
 import os
 # import tqdm
-from multiprocessing import Pool
+from tqdm.contrib.concurrent import process_map
+# from multiprocessing import Pool
 # from PIL import Image
 # from sklearn.preprocessing import normalize
 import istarmap
-import itertools
+from blender_allowable_tools import *
 
 def my_normalize(arr):
     arr_shape = arr.shape
     return normalize(arr.reshape((1, -1)), norm='l2').reshape(arr_shape)
+
+def random_mask_array(l, num):
+    mask = np.zeros(l, dtype=bool)
+    mask[:num] = True
+    np.random.shuffle(mask)
+    return mask
+
+def split_group_training_validation(group, num_validation):
+    training_df = group.sample(n=num_training, replace=len(group) < num_training).sort_index()
+
+    if len(group) <= num_training:
+        print("training and validation share data")
+        if len(group) <= num_validation:
+            validation_df = group
+        else:
+            validation_df = group.sample(n=num_validation).sort_index()
+    else:
+        validation_df = group[~group.index.isin(training_df.index)].sample(n=num_validation).sort_index()
+
+    return training_df, validation_df
+
+
+def split_training_validation(df, num_training=2_000, num_validation=5_000):
+    splits = df.groupby('instance_name', sort=False).apply(split_group_training_validation, num_training, num_validation)
+    return pd.concat([x[0] for x in splits]), pd.concat([x[1] for x in splits])
 
 def my_pierson(x, y):
     x = x.flatten()
@@ -40,25 +66,6 @@ def reorder_axes(axes, order):
         ret[order[i]] = axes[i]
     return ret
 
-def get_heatmap_cell_ranges(num_cubelets):
-    assert num_cubelets % 2 == 0
-    
-    longtitude = num_cubelets + 1
-    latitude = num_cubelets // 2
-    r = 1
-
-    dim0, delta_theta = np.linspace(-np.pi, np.pi, longtitude, retstep=True)
-    delta_S = delta_theta / latitude
-
-    dim1 = 1-np.arange(2*latitude+1) * delta_S / (r**2 * delta_theta)
-    dim1 =  np.arccos(dim1)
-    dim1 = (dim1 - (np.pi / 2))
-
-    dim2 = np.linspace(-np.pi, np.pi, num_cubelets + 1)
-
-
-    return list(enumerate(zip(dim0, dim0[1:]))), list(enumerate(zip(dim1, dim1[1:]))), list(enumerate(zip(dim2, dim2[1:])))
-
 def twod_alginment(v1, v2, flip):
     r1 = R.from_euler('zyx', v1[-1::-1])
     r2 = R.from_euler('zyx', v2[-1::-1])
@@ -77,8 +84,8 @@ def twod_alginment(v1, v2, flip):
     
     return np.abs(np.pi-np.arccos(np.round((a.trace() - 1) / 2, 6)))/np.pi, np.abs(np.dot(ax, [0,1,0]))
 
-def range_mid(r):
-    return r[0] + ((r[1] - r[0]) / 2)
+def canonical_processing_wrapper(args):
+    return canonical_processing(*args)
 
 def canonical_processing(d2i, d2, d0i, d0, d1i, d1, bin_rotations):
 
@@ -110,26 +117,23 @@ def get_canonical_heatmaps(num_cubelets, unrestricted_axis, hole):
     elif hole == 2:
         v_1_combinations = np.vstack((center_points, hole_points))
         
-    bin_rotations = np.repeat(np.insert(v_1_combinations, unrestricted_axis, None, axis=1), len(final_dim), axis=0).reshape(v_1_combinations.shape[0],num_cubelets,3)
+    bin_rotations = np.repeat(np.insert(v_1_combinations, unrestricted_axis, None, axis=1), num_cubelets, axis=0).reshape(v_1_combinations.shape[0],num_cubelets,3)
     bin_rotations[:,:,unrestricted_axis] = [range_mid(r[1]) for r in final_dim]
     bin_rotations = bin_rotations.reshape(-1,3)
 
-    iterator = [(d2i, d2, d0i, d0, d1i, d1, bin_rotations) for d2i, d2 in dim2s for d0i, d0 in dim0s for d1i, d1 in dim1s]
-
-    with Pool(20) as pool:
-        for result in tqdm.tqdm(pool.istarmap(canonical_processing, iterator), total=len(iterator)):
-    # for result in map(lambda x: canonical_processing(*x), iterator):
-            d0i, d1i, d2i, (A_max, E_max, A_flipped_max, E_flipped_max) = result
-            A[d0i, d1i, d2i] = A_max
-            E[d0i, d1i, d2i] = E_max
-            A_flipped[d0i, d1i, d2i] = A_flipped_max
-            E_flipped[d0i, d1i, d2i] = E_flipped_max
+    iterator = ((d2i, d2, d0i, d0, d1i, d1, bin_rotations) for d2i, d2 in dim2s for d0i, d0 in dim0s for d1i, d1 in dim1s)
+    for result in process_map(canonical_processing_wrapper, iterator, total=(len(dim0s) * len(dim1s) * len(dim2s))):
+        d0i, d1i, d2i, (A_max, E_max, A_flipped_max, E_flipped_max) = result
+        A[d0i, d1i, d2i] = A_max
+        E[d0i, d1i, d2i] = E_max
+        A_flipped[d0i, d1i, d2i] = A_flipped_max
+        E_flipped[d0i, d1i, d2i] = E_flipped_max
 
     return A, E, A_flipped, E_flipped
 
 def get_and_set_all_canonical_heatmaps():
     for axis, hole in [(0,0), (1,0), (2,0), (2,1), (2,2)]:
-        heatmap = get_canonical_heatmaps(20, axis, hole)
+        heatmap = get_canonical_heatmaps(32, axis, hole)
         set_generated_canonical_heatmap(heatmap, axis+hole)
 
 def get_generated_canonical_heatmap(unrestricted_axis):
@@ -263,25 +267,24 @@ def get_results(exp, num_cubelets, get_images, img_boundary=55, object_scale=Non
     get_heatmap(eval_frame, results, num_images, num_cubelets, images, img_boundary)
     return exp, results, num_images, images
 
-def get_heatmap_cell_ranges2(num_cubelets, as_ranges=True):
-
+def get_heatmap_cell_ranges(num_cubelets):
     assert num_cubelets % 2 == 0
     
+    longtitude = num_cubelets + 1
     latitude = num_cubelets // 2
+    r = 1
 
-    dim0, delta_theta = np.linspace(-np.pi, np.pi, num_cubelets + 1, retstep=True)
+    dim0, delta_theta = np.linspace(-np.pi, np.pi, longtitude, retstep=True)
     delta_S = delta_theta / latitude
 
-    dim1 = 1-np.arange(2*latitude+1) * delta_S / (2 * delta_theta)
-    dim1 = np.arccos(dim1)
+    dim1 = 1-np.arange(2*latitude+1) * delta_S / (r**2 * delta_theta)
+    dim1 =  np.arccos(dim1)
     dim1 = (dim1 - (np.pi / 2))
 
     dim2 = np.linspace(-np.pi, np.pi, num_cubelets + 1)
 
-    if as_ranges:
-        return np.array(list(itertools.product(*[np.stack([vs[:-1], vs[1:]]).T for vs in [dim0, dim1, dim2]]))).reshape(num_cubelets, num_cubelets, num_cubelets ,3, 2)
-    else:
-        return dim0, dim1, dim2
+
+    return list(enumerate(zip(dim0, dim0[1:]))), list(enumerate(zip(dim1, dim1[1:]))), list(enumerate(zip(dim2, dim2[1:])))
 
 def div_heatmap(df, activations, num_cubelets=20):
     dim0s, dim1s, dim2s = get_heatmap_cell_ranges2(num_cubelets)

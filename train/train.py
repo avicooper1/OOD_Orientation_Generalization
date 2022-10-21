@@ -1,90 +1,118 @@
-import torch
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
+from torch import no_grad, squeeze
+from tqdm.auto import tqdm
 import numpy as np
-
 import sys
-sys.path.append('/home/avic/OOD_Orientation_Generalization')
-from my_dataclasses import *
+from utils.persistent_data_class import *
 
-def train(model, dataset, criterion, optimizer, exp_data: ExpData, epoch_start, epoch_end, topk=False):
-    def run_epoch(train: bool, split: DataLoader, tqdm_disable=True):
 
-        if train:
-            model.train()
+def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, num_batches=0):
+    if train_epoch:
+        model.train()
+    else:
+        model.eval()
+
+    epoch_loss = 0.
+    all_predictions = []
+    all_targets = []
+    batch_counter = 0
+
+    for images, targets in dataloader:
+
+        targets = targets.cuda(non_blocking=True)
+
+        if len(images.shape) > 4:
+            images = images[0]
+            targets = targets[0]
+        
+        if train_epoch:
+            optimizer.zero_grad()
+            predictions = model(images)
         else:
-            model.eval()
+            with no_grad():
+                predictions = model(images)
 
-        epoch_loss = 0.
-        all_preds = []
-        all_targets = []
-
-        for batch in tqdm(split, disable=tqdm_disable):
-            if train:
-                optimizer.zero_grad()
-            images, targets = map(lambda t: t.to(device='cuda', non_blocking=True), batch)
-            if train:
-                preds = model(images)
-            else:
-                with torch.no_grad():
-                    preds = model(images)
-            targets = targets.flatten()
-
-            if exp_data.model_type == ModelType.Inception and train:
-                current_loss = criterion(preds.logits, targets) + criterion(preds.aux_logits, targets)
-            else:
-                current_loss = criterion(preds, targets)
-
-            if train:
-                current_loss.backward()
-                optimizer.step()
-
-            epoch_loss += current_loss
-            # if not topk:
-            all_preds.append((preds.logits if (exp_data.model_type == ModelType.Inception) and train else preds).argmax(dim=1).cpu())
-            # else:
-            #     all_preds.append(model(images).topk(topk)[1].cpu())
-            all_targets.append(targets.cpu())
-        return epoch_loss / len(split.dataset), (np.concatenate(all_targets), np.concatenate(all_preds))
-
-    writer = SummaryWriter(log_dir=exp_data.tensorboard_logs_dir)
-
-    def get_accuracy(targets, preds):
-        if not topk:
-            return preds == targets
+        if exp_data.model_type == ModelType.Inception:
+            current_loss = criterion(predictions.logits, targets) + criterion(predictions.aux_logits, targets)
         else:
-            print("Error: topk not implemented")
-            # truth_matrix = np.empty_like(targets, dtype=np.bool)
-            # for i, (t,p) in enumerate(zip(targets, preds)):
-            #     truth_matrix[i] = np.isin(t,p)
+            current_loss = criterion(predictions, targets)
 
-    for epoch in tqdm(range(epoch_start, epoch_end), disable=False):
+        if train_epoch:
+            current_loss.backward()
+            optimizer.step()
 
-        stats = {'Epoch': epoch}
+        epoch_loss += current_loss
 
-        for split, name in dataset.splits.all_loaders_named:
-            dataset.set_augmentation(exp_data.augment and name == 'Training')
-            results = run_epoch(name == 'Training', split)
-            accuracy = get_accuracy(results[1][0], results[1][1])
+        all_predictions.append(
+            (predictions.logits.cpu().numpy() if (exp_data.model_type == ModelType.Inception) and train_epoch else predictions).argmax(dim=1).cpu().numpy())
+        all_targets.append(targets.cpu().numpy())
 
-            loss_string = f'{name} Loss'
-            accuracy_string = f'{name} Accuracy'
+        pbar.update()
+        
+        batch_counter += 1
+        if num_batches != 0 and batch_counter > num_batches:
+            break
+        
+    return np.round((epoch_loss / len(dataloader.dataset)).item(), 7), np.concatenate(all_targets) == np.concatenate(all_predictions)
 
-            writer.add_scalar(loss_string, results[0], epoch)
-            writer.add_scalar(accuracy_string, np.average(accuracy), epoch)
 
-            stats[loss_string] = round(results[0].item(), 7)
-            stats[accuracy_string] = np.average(accuracy)
+def train(model, dataset, criterion, optimizer, exp_data):
 
-            if name == 'Testing':
+    epoch_activations = []
+    def hook(model, input, output):
+        epoch_activations.append(squeeze(output).detach().cpu().numpy())
 
-                pd.DataFrame({
-                    'data_div': exp_data.data_div,
-                    'epoch': epoch,
-                    'image_name': dataset.splits.testing.dataset.frame.image_name,
-                    'predicted_model': dataset.obj_cat_codec.inverse_transform(results[1][1]),
-                    'correct': get_accuracy(results[1][0], results[1][1])}).to_csv(exp_data.eval, mode='a', header=not os.path.exists(exp_data.eval))
-        pd.DataFrame(stats, index=[0]).to_csv(exp_data.stats, mode='a', header=not os.path.exists(exp_data.stats))
-        torch.save(model.state_dict(), exp_data.checkpoint)
+    model.avgpool.register_forward_hook(hook)
+    
+    num_training_batches = 1000
+    total_num_batches = num_training_batches + sum([len(l) for l in dataset.data_loaders[1:]])  
+    
+    peak_partial_ood_subset_accuracy = None
 
-        exp_data.log([f'Finished epoch {epoch}'])
+    for epoch in tqdm(range(exp_data.epochs_completed, exp_data.max_epochs), desc='Training epochs completed', file=sys.stdout):
+        with tqdm(total=total_num_batches, leave=False, file=sys.stdout) as pbar:
+            
+            training_loss, training_accuracy = run_epoch(exp_data, model, criterion, optimizer, True, dataset.train_loader, pbar, num_training_batches)
+            exp_data.eval_data.training_losses.append(training_loss)
+            exp_data.eval_data.training_accuracies.append(np.mean(training_accuracy))
+
+            # Determine if network is at peak accuracy for partial OOD by evaluating on a subset of the frame. If at peak, save corrects and run analysis
+            # on full partial OOD frame
+            partial_ood_subset_correct = run_epoch(exp_data, model, criterion, None, False, dataset.partial_ood_subset_loader, pbar)[1]
+            partial_ood_subset_accuracy = np.round(np.mean(partial_ood_subset_correct), 7)
+            if peak_partial_ood_subset_accuracy is None:
+                peak_partial_ood_subset_accuracy = (True, partial_ood_subset_accuracy)
+            else:
+                if peak_partial_ood_subset_accuracy[1] < partial_ood_subset_accuracy:
+                    peak_partial_ood_subset_accuracy = (True, partial_ood_subset_accuracy)
+                else:
+                    peak_partial_ood_subset_accuracy = (False, peak_partial_ood_subset_accuracy[1])
+
+            for dataloader, corrects, accuracies, losses, activations in zip(dataset.eval_loaders,
+                                                                             exp_data.eval_data.corrects,
+                                                                             exp_data.eval_data.accuracies,
+                                                                             exp_data.eval_data.losses,
+                                                                             exp_data.eval_data.activations):
+
+                if dataloader.dataset.name == 'partial OOD' and not peak_partial_ood_subset_accuracy[0]:
+                    losses.append(None)
+                    accuracies.append(None)
+                    continue
+                
+                epoch_activations = []
+                loss, corrects.arr = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar)
+                
+                accuracy = np.round(np.mean(corrects.arr), 7)
+                
+                if peak_partial_ood_subset_accuracy[0]:
+                    corrects.dump()
+                    activations.arr = np.vstack(epoch_activations)
+                    activations.dump()
+                    
+                losses.append(loss)
+                accuracies.append(accuracy)
+            
+        if exp_data.eval_data.partial_ood_accuracies[-5:] == [None] * 5:
+            break
+
+        exp_data.eval_data.save()
+        # save(model.state_dict(), exp_data.checkpoint)

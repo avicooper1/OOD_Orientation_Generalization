@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --array=[0-49]
-#SBATCH -t 01:00:00
+#SBATCH -t 00:10:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=2G
 #SBATCH --exclude node109,node112,node113,node106,node102
@@ -11,4 +11,4 @@
 #SBATCH --partition=normal
 
 hostname
-python3 /home/avic/OOD_Orientation_Generalization/render/finalize_render.py /home/avic/om2/OODOG 32 plane -sd ${SLURM_ARRAY_TASK_ID}
+python3 /home/avic/OOD_Orientation_Generalization/render/finalize_render.py /home/avic/om2/OODOG 32 lamp -sd ${SLURM_ARRAY_TASK_ID}

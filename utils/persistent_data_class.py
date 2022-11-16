@@ -14,13 +14,18 @@ def format_vars(obj):
         out += f'{k} : {obj_vars[k]}\n'
     return out
 
+
+PDC_KEY = '__PersistentDataClass__'
 PDO_KEY = '__PersistentDataObject__'
+
+
 class ProjectJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, PersistentDataObject):
             return {PDO_KEY: [type(o).__name__, o.file_path]}
         if isinstance(o, PersistentDataClass):
             return
+            # return {PDC_KEY: [type(o).__name__, o.file_path]}
         return super().default(o)
 
 def instantiate_data_object_from_str(s):
@@ -45,12 +50,13 @@ def ProjectJSONDecoder(dct):
 
 @dataclass
 class PersistentDataClass:
-    
+
     def __post_init__(self):
         if self.on_disk():
             self.load()
         else:
-            self.initial_init()
+            if hasattr(self, 'initial_init'):
+                self.initial_init()
             self.save()
         if hasattr(self, 'finish_init'):
             self.finish_init()
@@ -104,13 +110,12 @@ class ImageDataset(PersistentDataClass):
             print(r.model_category, r.model_i)
         return False
 
-
     def finalize_merging(self):
 
         def concat_subdataset_dfs():
             merged_dataset = pd.concat([sd.annotation_file.df for sd in self.subdatasets]).reset_index(drop=True)
             merged_dataset.image_name = merged_dataset.image_name.apply(lambda img: os.path.join(*img.split(os.sep)[-5:]))
-            merged_dataset['image_group'] = merged_dataset.image_name.apply(lambda p: os.path.join(*p.split(os.sep)[-5:-2], 'group.npy'))
+            merged_dataset['image_group'] = merged_dataset.image_name.apply(lambda p: os.path.join(*p.split(os.sep)[-5:-2], 'group.npy.gz'))
             merged_dataset.cubelet_i = merged_dataset.cubelet_i.apply(lambda ci: tuple(ci))
             merged_dataset['image_idx'] = merged_dataset.image_name.apply(lambda image_name: image_name.split(os.sep)[-1][5:-4])
             merged_dataset.to_csv(self.merged_annotation_file.file_path, sep=';', index=False)
@@ -156,7 +161,7 @@ class ImageSubDataset(PersistentDataClass):
     def initial_init(self):
         os.makedirs(self.path, exist_ok=True)
         self.image_dir = os.path.join(self.path, 'images')
-        self.image_group = Arr(self.path, 'group')
+        self.image_group = Arr(self.path, 'group', compress=True)
         
     def finish_init(self):
         self.annotation_file = AnnotationFile(self.path, 'dataset', storage_path=self.storage_path)
@@ -168,44 +173,39 @@ class ImageSubDataset(PersistentDataClass):
         return os.path.join(os.path.join(*self.path.split(os.sep)[-3:]), 'images', f'image{cubelet_i}.png')
 
 
-class ModelType(str, Enum):
-    ResNet = 'ResNet'
-    DenseNet = 'DenseNet'
-    Inception = 'Inception'
-    CorNet = 'CorNet'
-    ViT = 'ViT'
-    Equivariant = 'Equivariant'
-    DeiT = 'DeiT'
-
-
 @dataclass
 class ExpData(PersistentDataClass):
     path: str
     num: int
     run: int
     num_fully_seen: int
-    model_type: ModelType
+    model_type: str
+    hook_layer: str
     full_category: str
     partial_category: str
     dataset_resolution: int
-    base_orientations: [[float]]
     pretrained: bool
     augment: bool
+    free_axis: str = None
+    base_orientations: [[[float]]] = None
     lr: float = 0.01
     batch_size: int = 128
-    max_epochs: int = 25
+    max_epochs: int = 50
     full_instances: [str] = None
     held_instances: [str] = None
     partial_instances: [str] = None
     epochs_completed: int = 0
+    create_exp: bool = False
 
     def __post_init__(self):
+
         self.dir = os.path.join(self.path, f'experiments/exp{self.num}/{self.num_fully_seen}_fully_seen/run{self.run}')
         self.store_path = os.path.join(self.dir, 'configuration.json')
 
+        assert os.path.exists(self.store_path) or self.create_exp, 'Parameters disallow creating this experiment'
+
         super().__post_init__()
-        
-        
+
     def initial_init(self):
         self.log = os.path.join(self.dir, 'log.txt')
         self.checkpoint = os.path.join(self.dir, 'checkpoint.pt')
@@ -219,61 +219,56 @@ class ExpData(PersistentDataClass):
     def finish_init(self):
         self.training_frame = AnnotationFile(self.frames_dir, 'training', storage_path=self.path)
         self.full_validation_frame = AnnotationFile(self.frames_dir, 'full_validation', storage_path=self.path)
-        self.partial_validation_frame = AnnotationFile(self.frames_dir, 'partial_validation', storage_path=self.path)
+        self.partial_base_frame = AnnotationFile(self.frames_dir, 'partial_base', storage_path=self.path)
         self.partial_ood_frame = AnnotationFile(self.frames_dir, 'partial_ood', storage_path=self.path)
-        self.partial_ood_frame_subset = AnnotationFile(self.frames_dir, 'partial_ood_subset', storage_path=self.path)
         
         self.frames = [self.training_frame,
                        self.full_validation_frame,
-                       self.partial_validation_frame,
-                       self.partial_ood_frame,
-                       self.partial_ood_frame_subset]
+                       self.partial_base_frame,
+                       self.partial_ood_frame,]
 
         self.eval_data = EvalData(self.eval_dir)
         
 
     @classmethod
-    def from_job_i(cls, project_path, storage_path, job_i,  num_runs=5):
-
-        exps = pd.read_csv(os.path.join(project_path, 'exps.csv'))
-        exp = exps.iloc[job_i // (num_runs * 4)]
-
-        return cls(storage_path,
-                   job_i // 20,
-                   (job_i % (num_runs * 4)) // 4,
-                   ((job_i % 4) + 1) * 10,
-                   ModelType(exp.model_type),
-                   exp.full_category,
-                   exp.partial_category,
-                   int(exp.dataset_resolution),
-                   literal_eval(exp.base_orientations),
-                   bool(exp.pretrained),
-                   bool(exp.augment))
+    def from_job_i(cls, project_path, storage_path, job_i, num_runs=5, create_exp=False):
+        return cls.from_num(project_path, storage_path, job_i // 20, ((job_i % 4) + 1) * 10, (job_i % (num_runs * 4)) // 4, create_exp)
     
     @classmethod
-    def from_num(cls, project_path, storage_path, exp_num, data_div, run):
+    def from_num(cls, project_path, storage_path, exp_num, data_div, run, create_exp=False):
 
         exps = pd.read_csv(os.path.join(project_path, 'exps.csv'))
         exp = exps.iloc[exp_num]
+
+        assert (type(exp.base_orientations) is str) ^ (type(exp.free_axis) is str), 'For each experiment, either a set of orientations or a free axis can be specified, but not both'
+
+        if type(exp.base_orientations) is str:
+            base_orientations = literal_eval(exp.base_orientations)
+        else:
+            match exp.free_axis:
+                case 'γ':
+                    base_orientations = [[[-5, 5]], [[-0.1, 0.1]], [[-0.25, 0.25]]]
+                case 'β':
+                    base_orientations = [[[-0.25, 0.25]], [[-5, 5]], [[-0.25, 0.25]]]
+                case 'α':
+                    base_orientations = [[[-0.25, 0.25]], [[-0.1, 0.1]], [[-5, 5]]]
+                case 'hole':
+                    base_orientations = [[[-1.8, -1.3]], [[-0.1, 0.1]], [[-5, 5]]]
 
         return cls(storage_path,
                    exp_num,
                    run,
                    data_div,
-                   ModelType(exp.model_type),
+                   exp.model_type,
+                   exp.hook_layer,
                    exp.full_category,
                    exp.partial_category,
                    int(exp.dataset_resolution),
-                   literal_eval(exp.base_orientations),
                    bool(exp.pretrained),
-                   bool(exp.augment))
-
-
-    def __str__(self):
-        return self.__repr__()
-
-    def __repr__(self, print=False):
-        return format_vars(self) if print else ''
+                   bool(exp.augment),
+                   exp.free_axis if type(exp.free_axis) == str else None,
+                   base_orientations,
+                   create_exp=create_exp)
 
     def log(self, lines):
         with open(self.logs, 'a') as f:
@@ -292,16 +287,15 @@ class EvalData(PersistentDataClass):
 
     training_accuracies: [float] = field(default_factory=list)
     full_validation_accuracies: [float] = field(default_factory=list)
-    partial_validation_accuracies: [float] = field(default_factory=list)
+    partial_base_accuracies: [float] = field(default_factory=list)
     partial_ood_accuracies: [float] = field(default_factory=list)
-    partial_ood_subset_accuracies: [float] = field(default_factory=list)
 
     training_losses: [float] = field(default_factory=list)
     full_validation_losses: [float] = field(default_factory=list)
-    partial_validation_losses: [float] = field(default_factory=list)
+    partial_base_losses: [float] = field(default_factory=list)
     partial_ood_losses: [float] = field(default_factory=list)
-    partial_ood_subset_losses: [float] = field(default_factory=list)
-    
+
+
     def __post_init__(self):
         self.store_path = os.path.join(self.path, 'configuration.json')
         super().__post_init__()
@@ -309,30 +303,30 @@ class EvalData(PersistentDataClass):
         
     def initial_init(self):
 
-        self.full_validation_correct = Arr(self.path, 'full_validation_correct')
-        self.partial_validation_correct = Arr(self.path, 'partial_validation_correct')
-        self.partial_ood_correct = Arr(self.path, 'partial_ood_correct')
+        self.full_validation_correct = Arr(self.path, 'full_validation_correct', compress=True)
+        self.partial_base_correct = Arr(self.path, 'partial_base_correct', compress=True)
+        self.partial_ood_correct = Arr(self.path, 'partial_ood_correct', compress=True)
 
-        self.full_validation_activations = Arr(self.path, 'full_validation_activations')
-        self.partial_validation_activations = Arr(self.path, 'partial_validation_activations')
-        self.partial_ood_activations = Arr(self.path, 'partial_ood_activations')
+        self.full_validation_activations = Arr(self.path, 'full_validation_activations', compress=True)
+        self.partial_base_activations = Arr(self.path, 'partial_base_activations', compress=True)
+        self.partial_ood_activations = Arr(self.path, 'partial_ood_activations', compress=True)
         
 
     def finish_init(self):
         self.accuracies = [self.full_validation_accuracies,
-                           self.partial_validation_accuracies,
+                           self.partial_base_accuracies,
                            self.partial_ood_accuracies]
 
         self.losses = [self.full_validation_losses,
-                       self.partial_validation_losses,
+                       self.partial_base_losses,
                        self.partial_ood_losses]
 
         self.corrects = [self.full_validation_correct,
-                         self.partial_validation_correct,
+                         self.partial_base_correct,
                          self.partial_ood_correct]
 
         self.activations = [self.full_validation_activations,
-                            self.partial_validation_activations,
+                            self.partial_base_activations,
                             self.partial_ood_activations]
             
         

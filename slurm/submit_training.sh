@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --time 02:00:00
-#SBATCH --array=[20-39]
+#SBATCH --array=[0-479]
 #SBATCH -c 4
 #SBATCH --mem=64G
 
@@ -10,7 +10,7 @@
 #SBATCH --error=/home/avic/om2/logs/train/R_%A_%a.err
 #SBATCH --mail-type=END
 #SBATCH --mail-user=avic@mit.edu
-#SBATCH --partition=normal
+#SBATCH --partition=sinha
 
 hostname
 nvidia-smi

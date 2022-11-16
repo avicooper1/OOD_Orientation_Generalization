@@ -26,7 +26,7 @@ if __name__ == '__main__':
 
     from render.generate_sm_object import new_stimulus, stim_ids
     from utils.persistent_data_class import ImageDataset
-    from utils.blender_allowable_tools import get_heatmap_cell_ranges2, range_mid
+    from utils.tools import get_heatmap_cell_ranges, range_mid
 
     REDUCE_OUTPUT = True
     MODEL_ZOO_PATHS = os.path.join(args.project_path, 'render/model_paths.json')
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     dimension_scale_factor = np.sqrt((DIAGONAL_TARGET_LENGTH ** 2) / np.sum(np.array(obj.dimensions) ** 2))
     obj.dimensions = [obj.dimensions[i] * dimension_scale_factor for i in range(3)]
 
-    cubelet_ranges = get_heatmap_cell_ranges2(args.resolution).reshape(args.resolution ** 3, 3, 2)
+    cubelet_ranges = get_heatmap_cell_ranges(args.resolution).reshape(args.resolution ** 3, 3, 2)
 
     DATASET_ALREADY_EXISTS = SUB_IMAGE_DATASET.annotation_file.on_disk()
 

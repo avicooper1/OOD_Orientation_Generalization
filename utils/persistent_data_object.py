@@ -4,12 +4,13 @@ from ast import literal_eval
 import warnings
 import pandas as pd
 import numpy as np
-from multiprocessing import Pool
-from tqdm import tqdm
+import gzip
+from abc import ABC, abstractmethod
+from pathlib import Path
 
 
 @dataclass
-class PersistentDataObject:
+class PersistentDataObject(ABC):
     dir_path: str
     file_name: str
     extension: str
@@ -22,12 +23,11 @@ class PersistentDataObject:
 
     @classmethod
     def from_path(cls, path):
-        file_name, extension = os.path.splitext(os.path.basename(path))
-        return cls(os.path.dirname(path), file_name, extension[1:])
-
-
-    def __post_init__(self):
-        self.file_path = os.path.join(self.dir_path, f'{self.file_name}.{self.extension}')
+        path_as_pathlib = Path(path)
+        dir_path = str(path_as_pathlib.parent)
+        file_name = path_as_pathlib.stem.split('.')[0]
+        extension = ''.join(path_as_pathlib.suffixes)[1:]
+        return cls(dir_path, file_name, extension)
 
     @property
     def data(self):
@@ -51,6 +51,14 @@ class PersistentDataObject:
     def on_disk(self):
         return os.path.exists(self.file_path)
 
+    @abstractmethod
+    def loader(self):
+        pass
+
+    @abstractmethod
+    def dumper(self):
+        pass
+
     def load(self):
         if self.on_disk():
             return self.loader()
@@ -67,6 +75,17 @@ class PersistentDataObject:
 class Arr(PersistentDataObject):
 
     extension: str = 'npy'
+    compress: bool = False
+
+    def __post_init__(self):
+
+        if self.compress:
+            self.extension += '.gz'
+        else:
+            if self.extension[-2:] == 'gz':
+                self.compress = True
+
+        super().__post_init__()
 
     @property
     def arr(self):
@@ -77,10 +96,18 @@ class Arr(PersistentDataObject):
         self.data = arr
 
     def loader(self):
-        return np.load(self.file_path)
+        if self.compress:
+            with gzip.GzipFile(self.file_path, 'r') as f:
+                return np.load(f)
+        else:
+            return np.load(self.file_path)
 
     def dumper(self):
-        np.save(self.file_path, self.arr)
+        if self.compress:
+            with gzip.GzipFile(self.file_path, 'w') as f:
+                np.save(f, self.arr, allow_pickle=False)
+        else:
+            np.save(self.file_path, self.arr)
 
 
 @dataclass
@@ -113,10 +140,11 @@ class DF(PersistentDataObject):
 
 def get_path_components(s, num_components):
     return os.path.join(*s.split(os.sep)[-num_components:])
-        
+
+
 @dataclass
 class AnnotationFile(DF):
-    converters: dict = field(default_factory = lambda: {"cubelet_i": literal_eval})
+    converters: dict = field(default_factory=lambda: {"cubelet_i": literal_eval})
     delimiter: str = ';'
     storage_path: str = None
 
@@ -130,8 +158,8 @@ class AnnotationFile(DF):
     def destruct(self):
         df_to_write = self.df.copy()
         df_to_write.cubelet_i = df_to_write.cubelet_i.apply(lambda arr: str(tuple(arr)))
-        df_to_write.image_name = df_to_write.image_name.apply(lambda image_name: get_path_components(image_name, 5))
+        df_to_write.image_name = df_to_write.image_name.apply(lambda name: get_path_components(name, 5))
         if 'image_group' in df_to_write.columns:
-            df_to_write.image_group = df_to_write.image_group.apply(lambda image_group: get_path_components(image_group, 4))
+            df_to_write.image_group = df_to_write.image_group.apply(lambda group: get_path_components(group, 4))
         return df_to_write
         

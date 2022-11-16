@@ -6,7 +6,7 @@ from tqdm import tqdm
 import argparse
 import sys
 sys.path.append('/home/avic/OOD_Orientation_Generalization')
-from utils.persistent_data_class import ImageDataset, ImageSubDataset
+from utils.persistent_data_class import ImageDataset
 
 def i_from_name(name):
     return int(name[5:-4])
@@ -117,6 +117,7 @@ if __name__ == '__main__':
             if subdataset.images_compressed and not subdataset.images_grouped:
 
                 img_dim = 224 - (2 * args.crop)
+
                 subdataset.image_group.arr = np.empty((subdataset.resolution ** 3, img_dim, img_dim), dtype=np.uint8)
 
                 def callback(args):
@@ -131,5 +132,6 @@ if __name__ == '__main__':
                                callback)
 
                 subdataset.image_group.dump()
+                subdataset.image_group.arr = None
                 subdataset.images_grouped = True
                 subdataset.save()

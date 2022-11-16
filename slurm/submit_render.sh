@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=[0-49]
+#SBATCH --array=[3,4,9,22,23]
 #SBATCH -t 07:00:00
 #SBATCH -n 1
 #SBATCH --cpus-per-task=32

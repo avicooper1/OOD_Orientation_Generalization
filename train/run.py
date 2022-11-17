@@ -1,12 +1,12 @@
 from torch.backends.cuda import matmul
+from torch.nn import Linear, Conv2d
 import timm
+from cornet import CORnet_S
 from torch.optim import Adam
 from torch.nn import CrossEntropyLoss
-import os
 import sys
 import argparse
 from contextlib import redirect_stdout
-from contextlib import nullcontext
 
 if __name__ == '__main__':
     
@@ -30,13 +30,16 @@ if __name__ == '__main__':
 
     with open(EXP_DATA.log, 'a') as out:
         with redirect_stdout(out):
-    
+
             dataset = RotationDataset(EXP_DATA)
 
             match len(timm.list_models(EXP_DATA.model_type)):
                 case 0:
-                    # TODO: implement other models not in timm
-                    pass
+                    match EXP_DATA.model_type:
+                        case 'cornet':
+                            model = CORnet_S()
+                            model.V1.conv1 = Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+                            model.decoder.linear = Linear(in_features=512, out_features=50, bias=True)
                 case 1:
                     model = timm.create_model(EXP_DATA.model_type, in_chans=1,
                                               pretrained=EXP_DATA.pretrained,

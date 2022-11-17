@@ -1,27 +1,69 @@
-model_type,hook_layer,full_category,partial_category,dataset_resolution,base_orientations,free_axis,pretrained,augment
-resnet18,fc,plane,plane,32,,α,FALSE,FALSE
-resnet18,fc,plane,plane,32,,β,FALSE,FALSE
-resnet18,fc,plane,plane,32,,γ,FALSE,FALSE
-resnet18,fc,plane,plane,32,,hole,FALSE,FALSE
-resnet18,fc,SM,SM,32,,α,FALSE,FALSE
-resnet18,fc,SM,SM,32,,β,FALSE,FALSE
-resnet18,fc,SM,SM,32,,γ,FALSE,FALSE
-resnet18,fc,SM,SM,32,,hole,FALSE,FALSE
-resnet18,fc,plane,SM,32,,α,FALSE,FALSE
-resnet18,fc,plane,SM,32,,β,FALSE,FALSE
-resnet18,fc,plane,SM,32,,γ,FALSE,FALSE
-resnet18,fc,plane,SM,32,,hole,FALSE,FALSE
-resnet18,fc,SM,plane,32,,α,FALSE,FALSE
-resnet18,fc,SM,plane,32,,β,FALSE,FALSE
-resnet18,fc,SM,plane,32,,γ,FALSE,FALSE
-resnet18,fc,SM,plane,32,,hole,FALSE,FALSE
-resnet18,fc,car,car,32,,α,FALSE,FALSE
-resnet18,fc,car,car,32,,β,FALSE,FALSE
-resnet18,fc,car,car,32,,γ,FALSE,FALSE
-resnet18,fc,car,car,32,,hole,FALSE,FALSE
-resnet18,fc,lamp,lamp,32,,α,FALSE,FALSE
-resnet18,fc,lamp,lamp,32,,β,FALSE,FALSE
-resnet18,fc,lamp,lamp,32,,γ,FALSE,FALSE
-resnet18,fc,lamp,lamp,32,,hole,FALSE,FALSE
-resnet18,fc,plane,plane,32,"[[[-0.25,0.25]],[[-0.1,0.1]],[[-0.25,0.25]]]",,FALSE,FALSE
-resnet18,fc,plane,plane,32,"[[[-0.25,0.25],[-1.8,-1.3]],[[-0.1,0.1],[-0.1,0.1]],[[-5,5],[-5,5]]]",,FALSE,FALSE
+model_type,hook_layer,full_category,partial_category,dataset_resolution,base_orientations,free_axis,pretrained,augment,sliver,half_data
+# Default plane
+resnet18,fc,plane,plane,32,,α,
+resnet18,fc,plane,plane,32,,β,
+resnet18,fc,plane,plane,32,,γ,
+resnet18,fc,plane,plane,32,,hole,
+# Default SM
+resnet18,fc,SM,SM,32,,α,
+resnet18,fc,SM,SM,32,,β,
+resnet18,fc,SM,SM,32,,γ,
+resnet18,fc,SM,SM,32,,hole,
+# Default plane -> SM
+resnet18,fc,plane,SM,32,,α,
+resnet18,fc,plane,SM,32,,β,
+resnet18,fc,plane,SM,32,,γ,
+resnet18,fc,plane,SM,32,,hole,
+# Default SM -> plane
+resnet18,fc,SM,plane,32,,α,
+resnet18,fc,SM,plane,32,,β,
+resnet18,fc,SM,plane,32,,γ,
+resnet18,fc,SM,plane,32,,hole,
+# Default car
+resnet18,fc,car,car,32,,α,
+resnet18,fc,car,car,32,,β,
+resnet18,fc,car,car,32,,γ,
+resnet18,fc,car,car,32,,hole,
+# Default lamp
+resnet18,fc,lamp,lamp,32,,α,
+resnet18,fc,lamp,lamp,32,,β,
+resnet18,fc,lamp,lamp,32,,γ,
+resnet18,fc,lamp,lamp,32,,hole,
+# Special small base sets
+resnet18,fc,plane,plane,32,"[[[-0.25,0.25]],[[-0.1,0.1]],[[-0.25,0.25]]]",,
+resnet18,fc,plane,plane,32,"[[[-0.25,0.25],[-1.8,-1.3]],[[-0.1,0.1],[-0.1,0.1]],[[-5,5],[-5,5]]]",,
+# plane with pretraining
+resnet18,fc,plane,plane,32,,α,TRUE
+resnet18,fc,plane,plane,32,,β,TRUE
+resnet18,fc,plane,plane,32,,γ,TRUE
+resnet18,fc,plane,plane,32,,hole,TRUE
+# plane with data-augmentation
+resnet18,fc,plane,plane,32,,α,FALSE,TRUE
+resnet18,fc,plane,plane,32,,β,FALSE,TRUE
+resnet18,fc,plane,plane,32,,γ,FALSE,TRUE
+resnet18,fc,plane,plane,32,,hole,FALSE,TRUE
+# DenseNet with plane
+densenet121,classifier,plane,plane,32,,α,
+densenet121,classifier,plane,plane,32,,β,
+densenet121,classifier,plane,plane,32,,γ,
+densenet121,classifier,plane,plane,32,,hole,
+# ViT with plane
+vit_base_patch16_224,head,plane,plane,32,,α,
+vit_base_patch16_224,head,plane,plane,32,,β,
+vit_base_patch16_224,head,plane,plane,32,,γ,
+vit_base_patch16_224,head,plane,plane,32,,hole,
+# cornet with plane
+cornet,decoder.linear,plane,plane,32,,α,
+cornet,decoder.linear,plane,plane,32,,β,
+cornet,decoder.linear,plane,plane,32,,γ,
+cornet,decoder.linear,plane,plane,32,,hole,
+# plane with sliver
+resnet18,fc,plane,plane,32,,α,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,β,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,γ,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,hole,FALSE,FALSE,TRUE
+# plane with half-data
+resnet18,fc,plane,plane,32,,α,FALSE,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,β,FALSE,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,γ,FALSE,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,hole,FALSE,FALSE,FALSE,TRUE

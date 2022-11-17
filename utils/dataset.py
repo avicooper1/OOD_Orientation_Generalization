@@ -1,6 +1,6 @@
 import sys
 from torch import unsqueeze
-from torch import cuda
+from torch import cuda, vstack
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.sampler import BatchSampler, WeightedRandomSampler, SequentialSampler
 from torchvision import transforms
@@ -27,6 +27,7 @@ def get_dataloader(dataset, shuffle, batch_size):
 class RotationDataset:
 
     exp_data: ExpData
+    preload_dataset: bool = True
 
     def __post_init__(self):
         
@@ -39,19 +40,19 @@ class RotationDataset:
         self.instance_codec.fit(self.exp_data.full_instances + self.exp_data.held_instances + self.exp_data.partial_instances)
 
         group_cache = {}
-        self.datasets = [_Dataset(name, self, frame.df, True, self.exp_data.augment, group_cache)
+        self.datasets = [_Dataset(name, self, frame.df, self.preload_dataset, group_cache)
                          for frame, name in zip(self.exp_data.frames, (['training',
                                                                         'full validation',
                                                                         'partial base',
-                                                                        'partial OOD',]))]
-        
+                                                                        'partial OOD']))]
+
         del group_cache
-        
+
         self.data_loaders = [get_dataloader(dataset, shuffle, self.exp_data.batch_size)
                              for dataset, shuffle in zip(self.datasets, (True, False, False, False, False, False))]
-        
+
         self.train_loader, self.full_validation_loader, self.partial_base_loader, self.partial_ood_loader = self.data_loaders
-        
+
         # We change the order of the dataloaders to ensure that the partial_base_loader is run first, and if it is at peak
         # we save the results of the other dataloaders
         self.eval_loaders = self.data_loaders[1:]
@@ -120,7 +121,6 @@ class _Dataset(Dataset):
     dataset: RotationDataset
     frame: pd.DataFrame
     preload_dataset: bool
-    augment: bool
     group_cache: {str: object} = None
     loaded_dataset: cuda.ByteTensor = None
 
@@ -131,7 +131,7 @@ class _Dataset(Dataset):
         # Images are 224x224 pixels. 20 / 224 ~ 0.089, which allows for up to this much translation without losing
         # parts of the object
         # TODO We do implement scaling. Are we ok if parts of the image might be lost? Confirm these parameters
-        self.affine_transform = transforms.RandomAffine(degrees=(-180, 180) if self.augment else 0,
+        self.affine_transform = transforms.RandomAffine(degrees=(-180, 180) if self.dataset.exp_data.augment and (self.name == 'training') else 0,
                                                         translate=(0.08, 0.08),
                                                         scale=(0.8, 1.2),
                                                         interpolation=InterpolationMode.BILINEAR)
@@ -157,22 +157,17 @@ class _Dataset(Dataset):
 
     def get_img(self, idx):
         if self.preload_dataset:
-            image = self.loaded_dataset[idx].float()
-        
+            images = self.loaded_dataset[idx].float()
         else:
-            idx.tolist() # TODO check if it is necessary to turn to a list in this condition
-            entry = self.frame.iloc[idx]
-            image = read_image(entry.image_name) / 255
+            images = vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255
 
         if type(idx) == int:
-            image = unsqueeze(image, 0)
+            images = unsqueeze(images, 0)
 
-        image = transforms.Pad((224 - image.shape[-1]) // 2)(image)
-        # image = self.affine_transform(image)
-        # import pdb; pdb.set_trace()
-        image = transforms.Normalize(tuple(image.mean((-2, -1))), tuple(image.std((-2, -1))))(image)
-        # transforms.Normalize(image.mean(), image.std())(image)
-        return image.unsqueeze(axis=1)
+        images = transforms.Pad((224 - images.shape[-1]) // 2)(images)
+        images = vstack([self.affine_transform(image.unsqueeze(axis=0)) for image in images])
+        images = transforms.Normalize(tuple(images.mean((-2, -1))), tuple(images.std((-2, -1))))(images)
+        return images.unsqueeze(axis=1)
 
     def __len__(self):
         return len(self.frame)

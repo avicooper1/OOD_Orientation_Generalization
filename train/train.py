@@ -1,3 +1,4 @@
+from functools import reduce
 from torch import no_grad, squeeze
 from tqdm.auto import tqdm
 import numpy as np
@@ -59,10 +60,8 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
 def train(model, dataset, criterion, optimizer, exp_data):
 
     epoch_activations = []
-    def hook(m, i, o):
-        epoch_activations.append(squeeze(i[0]).detach().cpu().numpy())
-    
-    getattr(model, exp_data.hook_layer).register_forward_hook(hook)
+
+    reduce(getattr, [model] + exp_data.hook_layer.split('.')).register_forward_hook(lambda m, i, o: epoch_activations.append(squeeze(i[0]).detach().cpu().numpy()))
     
     num_training_batches = 1000
     total_num_batches = num_training_batches + sum([len(l) for l in dataset.data_loaders[1:]])
@@ -92,8 +91,8 @@ def train(model, dataset, criterion, optimizer, exp_data):
                                           exp_data.eval_data.losses,
                                           exp_data.eval_data.activations))
             
-            # The list comprehension in the following line allows us to reorder the data loaders and arrays so that the partial base set is shown first, which allows us to evaluate if
-            # network is at peak performance
+            # The list comprehension in the following line allows us to reorder the data loaders and arrays so that
+            # the partial base set is shown first, which allows us to evaluate if network is at peak performance
             for dataloader, corrects, accuracies, losses, activations in [loaders_and_arrays[i] for i in [2, 0, 1]]:
                 
                 epoch_activations = []
@@ -104,9 +103,8 @@ def train(model, dataset, criterion, optimizer, exp_data):
                 losses.append(loss)
                 accuracies.append(accuracy)
                 
-                # The partial base loader is first in eval loaders. Thus the results of all other (subsequent) dataloaders 
-                # will be saved only if partial base is at peak accuracy
-                
+                # The partial base loader is first in eval loaders. Thus the results of all other (subsequent)
+                # dataloaders will be saved only if partial base is at peak accuracy
                 if (dataloader.dataset.name == 'partial OOD'):
                     num_partial_ood_accuracies = len(exp_data.eval_data.partial_ood_accuracies)
                     if (num_partial_ood_accuracies > 0) and (np.argmax(exp_data.eval_data.partial_ood_accuracies) == num_partial_ood_accuracies - 1):

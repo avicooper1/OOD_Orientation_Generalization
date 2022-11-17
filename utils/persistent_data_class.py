@@ -1,6 +1,5 @@
 import os.path
 from dataclasses import dataclass, field, is_dataclass
-from enum import Enum
 import pandas as pd
 from ast import literal_eval
 import json
@@ -28,6 +27,7 @@ class ProjectJSONEncoder(json.JSONEncoder):
             # return {PDC_KEY: [type(o).__name__, o.file_path]}
         return super().default(o)
 
+
 def instantiate_data_object_from_str(s):
     match s:
         case 'PersistentDataObject':
@@ -40,6 +40,7 @@ def instantiate_data_object_from_str(s):
             return AnnotationFile
     print("Should not reach here")
     exit(-1)
+
 
 def ProjectJSONDecoder(dct):
     if PDO_KEY in dct:
@@ -186,6 +187,8 @@ class ExpData(PersistentDataClass):
     dataset_resolution: int
     pretrained: bool
     augment: bool
+    sliver: bool
+    half_data: bool
     free_axis: str = None
     base_orientations: [[[float]]] = None
     lr: float = 0.01
@@ -237,7 +240,7 @@ class ExpData(PersistentDataClass):
     @classmethod
     def from_num(cls, project_path, storage_path, exp_num, data_div, run, create_exp=False):
 
-        exps = pd.read_csv(os.path.join(project_path, 'exps.csv'))
+        exps = pd.read_csv(os.path.join(project_path, 'exps.csv'), comment='#')
         exp = exps.iloc[exp_num]
 
         assert (type(exp.base_orientations) is str) ^ (type(exp.free_axis) is str), 'For each experiment, either a set of orientations or a free axis can be specified, but not both'
@@ -255,6 +258,9 @@ class ExpData(PersistentDataClass):
                 case 'hole':
                     base_orientations = [[[-1.8, -1.3]], [[-0.1, 0.1]], [[-5, 5]]]
 
+        def parse_flag(f):
+            return (not pd.isna(f)) and bool(f)
+
         return cls(storage_path,
                    exp_num,
                    run,
@@ -264,8 +270,10 @@ class ExpData(PersistentDataClass):
                    exp.full_category,
                    exp.partial_category,
                    int(exp.dataset_resolution),
-                   bool(exp.pretrained),
-                   bool(exp.augment),
+                   parse_flag(exp.pretrained),
+                   parse_flag(exp.augment),
+                   parse_flag(exp.sliver),
+                   parse_flag(exp.half_data),
                    exp.free_axis if type(exp.free_axis) == str else None,
                    base_orientations,
                    create_exp=create_exp)
@@ -328,5 +336,3 @@ class EvalData(PersistentDataClass):
         self.activations = [self.full_validation_activations,
                             self.partial_base_activations,
                             self.partial_ood_activations]
-            
-        

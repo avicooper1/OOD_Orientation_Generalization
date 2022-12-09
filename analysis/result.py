@@ -1,4 +1,5 @@
 import os
+import warnings
 from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
@@ -14,6 +15,7 @@ def corr(arr1, arr2):
     return np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1]
 
 def upper_weight(arr):
+    return np.nanmean(arr), (~np.isnan(arr.flatten())).sum() / arr.flatten().shape[0]
     return np.mean(~np.isnan(arr) & (arr > 0.8))
 
 def calc_invariance(pre_act, pre_mask, post_act, post_mask):
@@ -30,12 +32,14 @@ def calc_invariance(pre_act, pre_mask, post_act, post_mask):
     
     inv = 1 - np.abs(np.divide((m_post_act - m_pre_act), (m_post_act + m_pre_act),
                                out=np.zeros(np.broadcast(m_pre_act, m_post_act).shape).astype(float),
-                               where=(m_post_act + m_pre_act)!=0))
-    mask = m_pre_mask | m_post_mask
-    inv[mask] = np.nan
+                               where=(m_post_act + m_pre_act) != 0))
+    
+    inv[(~m_pre_mask) & (~m_post_mask)] = np.nan
     
     if diff_dim0:
-        inv = np.nanmax(inv, axis=1)
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', r'All-NaN slice encountered')
+            inv = np.nanmax(inv, axis=1)
     
     return inv
 
@@ -73,8 +77,7 @@ class Result(PersistentDataClass):
         os.makedirs(self.d)
         self.num_fully_seen = self.exp_data.num_fully_seen
         self.run = self.exp_data.run
-        # The following line can be improved once saved config files for exps can be assumed to have .free_axis
-        self.free_axis = pd.read_csv(os.path.join(self.project_path, 'exps.csv')).iloc[self.exp_data.num].free_axis
+        self.free_axis = self.exp_data.free_axis
         self.category = self.exp_data.full_category if self.exp_data.full_category == self.exp_data.partial_category else f'{self.exp_data.full_category} -> {self.exp_data.partial_category}'
         
         self.id_acc = self.exp_data.eval_data.partial_base_correct.arr.mean()
@@ -95,11 +98,11 @@ class Result(PersistentDataClass):
         
         pred_func_mask = np.max(pred_func_sigmoid, axis=0) > pred_func_thresh
 
-        self.exp_data.partial_ood_frame.df['in_pred_func'] = np.isin(self.exp_data.partial_ood_frame.df.image_idx.values,
+        self.exp_data.partial_ood_frame.df['generalizable'] = np.isin(self.exp_data.partial_ood_frame.df.image_idx.values,
                                                                      np.where(pred_func_mask.flatten())[0])
         
-        self.exp_data.full_validation_frame.df['in_base'] = get_base_mask(self.exp_data.full_validation_frame.df, self.exp_data.base_orientations)
-        self.exp_data.full_validation_frame.df['in_pred_func'] = np.isin(self.exp_data.full_validation_frame.df.image_idx.values,
+        self.exp_data.full_validation_frame.df['base'] = get_base_mask(self.exp_data.full_validation_frame.df, self.exp_data.base_orientations)
+        self.exp_data.full_validation_frame.df['generalizable'] = np.isin(self.exp_data.full_validation_frame.df.image_idx.values,
                                                                          np.where(pred_func_mask.flatten())[0])
 
         self.partial_heatmap = Arr(self.d, 'partial_heatmap')
@@ -133,14 +136,13 @@ class Result(PersistentDataClass):
         max_act = np.stack([np.abs(activation.arr).max(axis=0) for activation in self.exp_data.eval_data.activations]).max(axis=0)
 
         for i, activation in enumerate(self.exp_data.eval_data.activations):
-            activation.arr /= max_act
-            activation.arr[:, np.where(max_act == 0)] = 0
+            activation.arr = np.divide(activation.arr, max_act, out=np.zeros(activation.arr.shape), where=max_act != 0)
                 
-        pp_acts, pn_acts = self.get_ood_activations(self.exp_data.partial_instances,
+        pg_acts, pn_acts = self.get_ood_activations(self.exp_data.partial_instances,
                                                     self.exp_data.partial_ood_frame,
                                                     self.exp_data.eval_data.partial_ood_activations)
         
-        fp_acts, fn_acts = self.get_ood_activations(self.exp_data.full_instances,
+        fg_acts, fn_acts = self.get_ood_activations(self.exp_data.full_instances,
                                                     self.exp_data.full_validation_frame,
                                                     self.exp_data.eval_data.full_validation_activations)
 
@@ -155,37 +157,44 @@ class Result(PersistentDataClass):
                                             self.exp_data.eval_data.full_validation_activations)
         
         acts = {'fb': fb_acts, 
-                'pb': pb_acts, 
-                'fp': fp_acts, 
+                'pb': pb_acts,
+                'fg': fg_acts,
                 'fn': fn_acts, 
-                'pp': pp_acts, 
+                'pg': pg_acts,
                 'pn': pn_acts}
         
-        # thresh_mask = {k: v > activation_threshold for k, v in acts.items()}
         # TODO If we use networks that don't only have ReLU activations, we might have negative normalized values here. This should be changed such that the absolute value is above some threshold
-        thresh_mask = {k: v > 0.2 for k, v in acts.items()}
+        
+        sorted_acts = np.sort(np.hstack([v.flatten() for v in acts.values()]))
+        threshold = sorted_acts[int(sorted_acts.shape[0] * 0.95)]
+        
+        # thresh_mask = {k: np.sort(v.flatten())[int(v.flatten().shape[0] * 0.99)] for k, v in acts.items()}
+        thresh_mask = {k: v > threshold for k, v in acts.items()}
+
         self.selectivity = {k: v.mean() for k, v in thresh_mask.items()}
         self.invariance = {f'{k1}_{k2}': upper_weight(calc_invariance(acts[k1], thresh_mask[k1], acts[k2], thresh_mask[k2])) for k1, k2 in combinations(acts.keys(), 2)}
-        
 
+        self.acts = acts
+        self.thresh_mask = thresh_mask
+        
         self.partial_heatmap.dump()
         self.base_mask.dump()
         
     def get_ood_activations(self, instance_list, frame, activations):
         ret = np.zeros((2, len(instance_list), 512))
         
-        df = frame.df[~frame.df.in_base] if 'in_base' in frame.df.columns else frame.df
+        df = frame.df[~frame.df.base] if 'base' in frame.df.columns else frame.df
         
-        for (in_pred_func, instance_name), indices in frame.df.groupby(['in_pred_func', 'instance_name'], 
+        for (generalizable, instance_name), indices in df.groupby(['generalizable', 'instance_name'],
                                                                        sort=False).indices.items():
-            ret[int(~in_pred_func), instance_list.index(instance_name)] = np.mean(activations.arr[indices], axis=0)
+            ret[int(~generalizable), instance_list.index(instance_name)] = np.mean(activations.arr[indices], axis=0)
             
         return ret[0], ret[1]
     
     def get_base_activations(self, instance_list, frame, activations):
         ret = np.zeros((len(instance_list), 512))
         
-        df = frame.df[frame.df.in_base] if 'in_base' in frame.df.columns else frame.df
+        df = frame.df[frame.df.base] if 'base' in frame.df.columns else frame.df
         
         for instance_name, indices in df.groupby('instance_name', sort=False).indices.items():
             ret[instance_list.index(instance_name)] = np.mean(activations.arr[indices], axis=0)
@@ -206,7 +215,7 @@ class Result(PersistentDataClass):
     
     @property
     def accuracy_frame(self):
-        return self.finalize_results_frame({'Orientation Set': ['Predicted', 'Not-Predicted'],
+        return self.finalize_results_frame({'Orientation Set': ['Generalizable', 'Non-Generalizable'],
                                             'Accuracy': [self.pred_acc, self.xpred_acc]})
     
     @property
@@ -230,10 +239,10 @@ class Result(PersistentDataClass):
         match k:
             case 'b':
                 return 'Base'
-            case 'p':
-                return 'Predicted'
+            case 'g':
+                return 'Generalizable'
             case 'n':
-                    return 'Not-Predicted'
+                    return 'Non-Generalizable'
         raise Exception(f'{k} does not match any for any Orientation Set')
     
     @property
@@ -248,7 +257,13 @@ class Result(PersistentDataClass):
         keys = self.invariance.keys()
         return self.finalize_results_frame({'Instance Transform': [f'{self.k_to_instance(k[0])} -> {self.k_to_instance(k[3])}' for k in keys],
                                             'Orientation Transform': [f'{self.k_to_orientation(k[1])} -> {self.k_to_orientation(k[4])}' for k in keys],
-                                            'Invariance': [self.invariance[k] for k in keys]})
+                                            'Invariance': [self.invariance[k][0] for k in keys]})
+    @property
+    def invariances_nans_frame(self):
+        keys = self.invariance.keys()
+        return self.finalize_results_frame({'Instance Transform': [f'{self.k_to_instance(k[0])} -> {self.k_to_instance(k[3])}' for k in keys],
+                                            'Orientation Transform': [f'{self.k_to_orientation(k[1])} -> {self.k_to_orientation(k[4])}' for k in keys],
+                                            'Invariance': [self.invariance[k][1] for k in keys]})
 
     @classmethod
     def from_job_i(cls, project_path, storage_path, job_i, num_runs=5):

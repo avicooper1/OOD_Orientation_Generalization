@@ -4,11 +4,14 @@ from tqdm.auto import tqdm
 import numpy as np
 import sys
 from utils.persistent_data_class import *
-from torch import broadcast_to
+from torch import broadcast_to, unsqueeze
 from torch.nn import BatchNorm2d
+from torch.nn.functional import normalize
+import torch
+from torch.nn import CrossEntropyLoss
 
 
-def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, num_batches=0):
+def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, num_batches=0, acts=None, ce_loss=None):
     
     if train_epoch:
         model.train()
@@ -36,11 +39,16 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
             with no_grad():
                 predictions = model(images)
 
-        current_loss = criterion(predictions, targets)
-            
-
+        current_loss = criterion(unsqueeze(normalize(acts[0][0], dim=1), dim=1), targets)
+                
         if train_epoch:
+            
             current_loss.backward()
+            
+            fc_projection = model.fc(acts[0][0].detach())
+            
+            ce_loss(fc_projection, targets).backward()
+            
             optimizer.step()
 
         epoch_loss += current_loss
@@ -61,10 +69,20 @@ def train(model, dataset, criterion, optimizer, exp_data):
 
     epoch_activations = []
 
-    reduce(getattr, [model] + exp_data.hook_layer.split('.')).register_forward_hook(lambda m, i, o: epoch_activations.append(squeeze(i[0]).detach().cpu().numpy()))
+    penultimate_layer = reduce(getattr, [model] + exp_data.hook_layer.split('.'))
+    
+    penultimate_layer.register_forward_hook(lambda m, i, o: epoch_activations.append(squeeze(i[0]).detach().cpu().numpy()))
+    
+    acts = [None]
+    def set_acts(m, i, o):
+        acts[0] = i
+    penultimate_layer.register_forward_hook(set_acts)
+    
     
     num_training_batches = 1000
     total_num_batches = num_training_batches + sum([len(l) for l in dataset.data_loaders[1:]])
+    
+    ce_loss = CrossEntropyLoss()
 
     for exp_data.epochs_completed in tqdm(range(exp_data.epochs_completed, exp_data.max_epochs),
                       desc='Training epochs completed',
@@ -78,7 +96,7 @@ def train(model, dataset, criterion, optimizer, exp_data):
                                                          True,
                                                          dataset.train_loader,
                                                          pbar,
-                                                         num_training_batches)
+                                                         num_training_batches, acts, ce_loss)
             
             exp_data.eval_data.training_losses.append(training_loss)
             exp_data.eval_data.training_accuracies.append(np.mean(training_accuracy))
@@ -96,7 +114,7 @@ def train(model, dataset, criterion, optimizer, exp_data):
             for dataloader, corrects, accuracies, losses, activations in [loaders_and_arrays[i] for i in [2, 0, 1]]:
                 
                 epoch_activations = []
-                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar)
+                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, acts=acts)
                 
                 accuracy = np.round(np.mean(epoch_corrects), 7)
                 

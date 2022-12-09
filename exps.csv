@@ -67,3 +67,8 @@ resnet18,fc,plane,plane,32,,α,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,β,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,γ,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,hole,FALSE,FALSE,FALSE,TRUE
+# some tests with contrastive loss
+resnet18,fc,plane,plane,32,,α,
+resnet18,fc,plane,plane,32,,β,
+resnet18,fc,plane,plane,32,,γ,
+resnet18,fc,plane,plane,32,,hole,

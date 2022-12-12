@@ -27,7 +27,7 @@ def get_dataloader(dataset, shuffle, batch_size):
 class RotationDataset:
 
     exp_data: ExpData
-    preload_dataset: bool = True
+    preload_dataset: bool = False
 
     def __post_init__(self):
         
@@ -159,7 +159,7 @@ class _Dataset(Dataset):
         if self.preload_dataset:
             images = self.loaded_dataset[idx].float()
         else:
-            images = vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255
+            images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
 
         if type(idx) == int:
             images = unsqueeze(images, 0)

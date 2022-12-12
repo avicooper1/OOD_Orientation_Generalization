@@ -7,27 +7,34 @@ from torch.nn import CrossEntropyLoss
 import sys
 import argparse
 from contextlib import redirect_stdout
+from torch import where, randint, square, concat
+from torch.nn import Module
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-class SupervisedContrastiveLoss(nn.Module):
-    def __init__(self, temperature=0.1):
-        super(SupervisedContrastiveLoss, self).__init__()
-        self.temperature = temperature
+class MyContrastiveLoss(Module):
+    def __init__(self, cross_entropy_loss, temp=0.1):
+        super().__init__()
+        self.cross_entropy_loss = cross_entropy_loss
+        self.temp = temp
 
-    def forward(self, feature_vectors, labels):
-        # Normalize feature vectors
-        feature_vectors_normalized = F.normalize(feature_vectors, p=2, dim=1)
-        # Compute logits
-        logits = torch.div(
-            torch.matmul(
-                feature_vectors_normalized, torch.transpose(feature_vectors_normalized, 0, 1)
-            ),
-            self.temperature,
-        )
-        return losses.NTXentLoss(temperature=0.07)(logits, torch.squeeze(labels))
+
+    def pair_distance(self, index, label, class_map, features):
+        pairs = class_map[label]
+        if len(pairs) == 1:
+            return 0
+        return square(features[index] - features[where(pairs != label)[0][randint(0, len(pairs) - 1, (1,))[0]]]).sum().sqrt()
+
+
+    def forward(self, pre_projection_activations, post_projection_activations, labels):
+        class_map = [where(labels == x)[0] for x in range(50)]
+        mean_distance = concat([self.pair_distance(index,
+                                                   label,
+                                                   class_map,
+                                                   pre_projection_activations) for index, label in enumerate(labels)]).mean()
+        return self.cross_entropy_loss(post_projection_activations, labels) + (self.temp * mean_distance)
+
+
+
 
 if __name__ == '__main__':
     
@@ -76,6 +83,7 @@ if __name__ == '__main__':
 
     print('Beginning Training')
     # train(model, dataset, CrossEntropyLoss(), Adam(model.parameters(), lr=EXP_DATA.lr), EXP_DATA)
-    train(model, dataset, SupConLoss().cuda(), Adam(model.parameters(), lr=0.05), EXP_DATA)
+    train(model, dataset, MyContrastiveLoss(CrossEntropyLoss()), Adam(model.parameters(), lr=0.05), EXP_DATA)
+    # train(model, dataset, SupConLoss().cuda(), Adam(model.parameters(), lr=0.05), EXP_DATA)
     # train(model, dataset, SupervisedContrastiveLoss(), Adam(model.parameters(), lr=0.05), EXP_DATA)
     print('Completed Training')

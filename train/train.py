@@ -39,21 +39,21 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
             with no_grad():
                 predictions = model(images)
 
-        current_loss = criterion(unsqueeze(normalize(acts[0][0], dim=1), dim=1), targets)
-                
+        if train_epoch != True:
+            fc_projection = model.fc(normalize(acts[0][0].detach(), dim=1))
+            current_loss = ce_loss(fc_projection, targets)
+            all_predictions.append(fc_projection.argmax(dim=1).cpu().numpy())
+
         if train_epoch:
-            
+            if train_epoch != 2:
+                all_predictions.append(predictions.argmax(dim=1).cpu().numpy())
+                current_loss = criterion(unsqueeze(normalize(acts[0][0], dim=1), dim=1), targets)
+
             current_loss.backward()
-            
-            fc_projection = model.fc(acts[0][0].detach())
-            
-            ce_loss(fc_projection, targets).backward()
-            
             optimizer.step()
 
         epoch_loss += current_loss
 
-        all_predictions.append(predictions.argmax(dim=1).cpu().numpy())
         all_targets.append(targets.cpu().numpy())
 
         pbar.update()
@@ -96,7 +96,15 @@ def train(model, dataset, criterion, optimizer, exp_data):
                                                          True,
                                                          dataset.train_loader,
                                                          pbar,
-                                                         num_training_batches, acts, ce_loss)
+                                                         num_training_batches, acts)
+            training_loss, training_accuracy = run_epoch(exp_data,
+                                                         model,
+                                                         criterion,
+                                                         optimizer,
+                                                         2,
+                                                         dataset.train_loader,
+                                                         pbar,
+                                                         100, acts, ce_loss)
             
             exp_data.eval_data.training_losses.append(training_loss)
             exp_data.eval_data.training_accuracies.append(np.mean(training_accuracy))
@@ -114,7 +122,7 @@ def train(model, dataset, criterion, optimizer, exp_data):
             for dataloader, corrects, accuracies, losses, activations in [loaders_and_arrays[i] for i in [2, 0, 1]]:
                 
                 epoch_activations = []
-                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, acts=acts)
+                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, acts=acts, ce_loss=ce_loss)
                 
                 accuracy = np.round(np.mean(epoch_corrects), 7)
                 

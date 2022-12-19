@@ -11,7 +11,7 @@ import torch
 from torch.nn import CrossEntropyLoss
 
 
-def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, num_batches=0, acts=None, ce_loss=None):
+def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, num_batches=0, batch_activations=None):
     
     if train_epoch:
         model.train()
@@ -38,23 +38,21 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
         else:
             with no_grad():
                 predictions = model(images)
-
-        if train_epoch != True:
-            fc_projection = model.fc(normalize(acts[0][0].detach(), dim=1))
-            current_loss = ce_loss(fc_projection, targets)
-            all_predictions.append(fc_projection.argmax(dim=1).cpu().numpy())
+                
+        match exp_data.loss:
+            case 'CE':
+                current_loss = criterion(predictions, targets)
+            case 'Contrastive':
+                current_loss = criterion(batch_activations[0][0], predictions, targets)
 
         if train_epoch:
-            if train_epoch != 2:
-                all_predictions.append(predictions.argmax(dim=1).cpu().numpy())
-                current_loss = criterion(unsqueeze(normalize(acts[0][0], dim=1), dim=1), targets)
-
             current_loss.backward()
             optimizer.step()
 
         epoch_loss += current_loss
 
         all_targets.append(targets.cpu().numpy())
+        all_predictions.append(predictions.argmax(dim=1).cpu().numpy())
 
         pbar.update()
         
@@ -68,26 +66,30 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
 def train(model, dataset, criterion, optimizer, exp_data):
 
     epoch_activations = []
+    store_epoch_activations = False
+    batch_activations = [None]
 
     penultimate_layer = reduce(getattr, [model] + exp_data.hook_layer.split('.'))
     
-    penultimate_layer.register_forward_hook(lambda m, i, o: epoch_activations.append(squeeze(i[0]).detach().cpu().numpy()))
+    def store_activations(m, i, o):
+        if store_epoch_activations:
+            epoch_activations.append(squeeze(i[0]).detach().cpu().numpy())
+        if exp_data.loss == 'Contrastive':
+            batch_activations[0] = i
+        
     
-    acts = [None]
-    def set_acts(m, i, o):
-        acts[0] = i
-    penultimate_layer.register_forward_hook(set_acts)
+    penultimate_layer.register_forward_hook(store_activations)
     
     
     num_training_batches = 1000
     total_num_batches = num_training_batches + sum([len(l) for l in dataset.data_loaders[1:]])
-    
-    ce_loss = CrossEntropyLoss()
 
     for exp_data.epochs_completed in tqdm(range(exp_data.epochs_completed, exp_data.max_epochs),
                       desc='Training epochs completed',
                       file=sys.stdout):
         with tqdm(total=total_num_batches, leave=False, file=sys.stdout) as pbar:
+            
+            store_epoch_activations = False
 
             training_loss, training_accuracy = run_epoch(exp_data,
                                                          model,
@@ -96,57 +98,62 @@ def train(model, dataset, criterion, optimizer, exp_data):
                                                          True,
                                                          dataset.train_loader,
                                                          pbar,
-                                                         num_training_batches, acts)
-            training_loss, training_accuracy = run_epoch(exp_data,
-                                                         model,
-                                                         criterion,
-                                                         optimizer,
-                                                         2,
-                                                         dataset.train_loader,
-                                                         pbar,
-                                                         100, acts, ce_loss)
+                                                         num_training_batches,
+                                                         batch_activations)
             
             exp_data.eval_data.training_losses.append(training_loss)
             exp_data.eval_data.training_accuracies.append(np.mean(training_accuracy))
             
-            peak_partial_ood_accuracy = False
-
-            loaders_and_arrays = list(zip(dataset.eval_loaders,
-                                          exp_data.eval_data.corrects,
-                                          exp_data.eval_data.accuracies,
-                                          exp_data.eval_data.losses,
-                                          exp_data.eval_data.activations))
+            # peak_partial_ood_accuracy = False
+            
+            store_epoch_activations = True
             
             # The list comprehension in the following line allows us to reorder the data loaders and arrays so that
             # the partial base set is shown first, which allows us to evaluate if network is at peak performance
-            for dataloader, corrects, accuracies, losses, activations in [loaders_and_arrays[i] for i in [2, 0, 1]]:
+            for dataloader, corrects, accuracies, losses, activations in list(zip(dataset.eval_loaders,
+                                                                                  exp_data.eval_data.corrects,
+                                                                                  exp_data.eval_data.accuracies,
+                                                                                  exp_data.eval_data.losses,
+                                                                                  exp_data.eval_data.activations)):
                 
                 epoch_activations = []
-                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, acts=acts, ce_loss=ce_loss)
+                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, batch_activations=batch_activations)
                 
                 accuracy = np.round(np.mean(epoch_corrects), 7)
                 
                 losses.append(loss)
                 accuracies.append(accuracy)
                 
-                # The partial base loader is first in eval loaders. Thus the results of all other (subsequent)
-                # dataloaders will be saved only if partial base is at peak accuracy
-                if (dataloader.dataset.name == 'partial OOD'):
-                    num_partial_ood_accuracies = len(exp_data.eval_data.partial_ood_accuracies)
-                    if (num_partial_ood_accuracies > 0) and (np.argmax(exp_data.eval_data.partial_ood_accuracies) == num_partial_ood_accuracies - 1):
-                        peak_partial_ood_accuracy = True
+                corrects.temp_arr = epoch_corrects
+                activations.temp_arr = np.vstack(epoch_activations)
                 
-                if peak_partial_ood_accuracy:
-                    corrects.arr = epoch_corrects
-                    activations.arr = np.vstack(epoch_activations)
-
+#                 # The full validation loader is first in eval loaders. Thus the results of all other (subsequent)
+#                 # dataloaders will be saved only if full validation is at peak accuracy
+#                 if (dataloader.dataset.name == 'full validation'):
+#                     num_partial_ood_accuracies = len(exp_data.eval_data.partial_ood_accuracies)
+#                     if (num_partial_ood_accuracies > 0) and (np.argmax(exp_data.eval_data.partial_ood_accuracies) == num_partial_ood_accuracies - 1):
+#                         peak_partial_ood_accuracy = True
+                
+#                 if peak_partial_ood_accuracy:
+#                     corrects.arr = epoch_corrects
+#                     activations.arr = np.vstack(epoch_activations)
+        
+        exp_data.eval_data.validation_and_partial_base_accuracies.append(((exp_data.eval_data.full_validation_accuracies[-1] * len(exp_data.full_instances)) + exp_data.eval_data.partial_base_accuracies[-1] * len(exp_data.partial_instances)) / (len(exp_data.full_instances) + len(exp_data.partial_instances)))
         exp_data.eval_data.save()
         exp_data.save()
         
-        if np.argmax(exp_data.eval_data.partial_ood_accuracies) < (len(exp_data.eval_data.partial_ood_accuracies) - 6):
+        max_validation_and_partial_base_accuracies_index = np.argmax(exp_data.eval_data.validation_and_partial_base_accuracies)
+        
+        if max_validation_and_partial_base_accuracies_index == len(exp_data.eval_data.validation_and_partial_base_accuracies) - 1:
+            for corrects, activations in zip(exp_data.eval_data.corrects, exp_data.eval_data.activations):
+                corrects.arr = corrects.temp_arr
+                activations.arr = activations.temp_arr
+            
+        
+        if (exp_data.epochs_completed >= 10) and (max_validation_and_partial_base_accuracies_index < (len(exp_data.eval_data.validation_and_partial_base_accuracies) - 7)):
             break
             
     for corrects, activations in zip(exp_data.eval_data.corrects, exp_data.eval_data.activations):
-    
+        
         corrects.dump()
         activations.dump()

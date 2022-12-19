@@ -185,6 +185,7 @@ class ExpData(PersistentDataClass):
     full_category: str
     partial_category: str
     dataset_resolution: int
+    loss: str
     pretrained: bool
     augment: bool
     sliver: bool
@@ -193,7 +194,7 @@ class ExpData(PersistentDataClass):
     base_orientations: [[[float]]] = None
     lr: float = 0.01
     batch_size: int = 128
-    max_epochs: int = 50
+    max_epochs: int = 100
     full_instances: [str] = None
     held_instances: [str] = None
     partial_instances: [str] = None
@@ -270,6 +271,7 @@ class ExpData(PersistentDataClass):
                    exp.full_category,
                    exp.partial_category,
                    int(exp.dataset_resolution),
+                   exp.loss,
                    parse_flag(exp.pretrained),
                    parse_flag(exp.augment),
                    parse_flag(exp.sliver),
@@ -302,6 +304,8 @@ class EvalData(PersistentDataClass):
     full_validation_losses: [float] = field(default_factory=list)
     partial_base_losses: [float] = field(default_factory=list)
     partial_ood_losses: [float] = field(default_factory=list)
+    
+    validation_and_partial_base_accuracies: [float] = field(default_factory=list)
 
 
     def __post_init__(self):

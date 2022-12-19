@@ -52,14 +52,19 @@ class Result(PersistentDataClass):
     exp_data: ExpData
     project_path: str
 
+    num: int = None
     num_fully_seen: int = None
     run: int = None
     free_axis: str = None
     category: str = None
     id_acc: float = None
     ood_acc: float = None
-    pred_acc: float = None
-    xpred_acc: float = None
+    full_base_acc: float = None
+    full_generalizable_acc: float = None
+    full_non_generalizable_acc: float = None
+    partial_base_acc: float = None
+    partial_generalizable_acc: float = None
+    partial_non_generalizable_acc: float = None
     unif_corr: float = None
     a_corr: float = None
     e_corr: float = None
@@ -75,6 +80,7 @@ class Result(PersistentDataClass):
     def initial_init(self):
 
         os.makedirs(self.d)
+        self.num = self.exp_data.num
         self.num_fully_seen = self.exp_data.num_fully_seen
         self.run = self.exp_data.run
         self.free_axis = self.exp_data.free_axis
@@ -122,8 +128,29 @@ class Result(PersistentDataClass):
 
         self.partial_heatmap.arr = self.partial_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
         self.base_mask.arr = self.base_mask.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+        
+        
+        self.full_heatmap = Arr(self.d, 'full_heatmap')
+        self.full_heatmap.arr = np.empty(self.exp_data.dataset_resolution ** 3)
+        self.full_heatmap.arr[:] = np.nan
+        
+        full_only_frame = self.exp_data.full_validation_frame.df[self.exp_data.full_validation_frame.df.instance_name.isin(self.exp_data.full_instances)]
+        
+        for flat_cubelet_i, indices in full_only_frame.groupby('image_idx', sort=False).indices.items():
+            self.full_heatmap.arr[flat_cubelet_i] = self.exp_data.eval_data.full_validation_correct.arr[indices].mean()
+        self.full_heatmap.arr = self.full_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
 
-        self.pred_acc, self.xpred_acc = self.partial_heatmap.arr[pred_func_mask].mean(), self.partial_heatmap.arr[~pred_func_mask].mean()
+        
+        self.partial_base_acc = self.exp_data.eval_data.partial_base_correct.arr.mean()
+        self.partial_generalizable_acc = self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[self.exp_data.partial_ood_frame.df.generalizable].index].mean()
+        self.partial_non_generalizable_acc = self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[~self.exp_data.partial_ood_frame.df.generalizable].index].mean()
+        
+        self.full_base_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.base].index].mean()
+        self.full_generalizable_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.generalizable & ~full_only_frame.base].index].mean()
+        self.full_non_generalizable_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[~full_only_frame.generalizable & ~full_only_frame.base].index].mean()
+            
+        
+        
 
         self.unif_corr, self.a_corr, self.e_corr, self.ae_corr, self.all_corr = (corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape)),
                                                                 corr(self.partial_heatmap.arr, pred_func_sigmoid[0]),
@@ -174,11 +201,12 @@ class Result(PersistentDataClass):
         self.selectivity = {k: v.mean() for k, v in thresh_mask.items()}
         self.invariance = {f'{k1}_{k2}': upper_weight(calc_invariance(acts[k1], thresh_mask[k1], acts[k2], thresh_mask[k2])) for k1, k2 in combinations(acts.keys(), 2)}
 
-        self.acts = acts
-        self.thresh_mask = thresh_mask
+        # self.acts = acts
+        # self.thresh_mask = thresh_mask
         
         self.partial_heatmap.dump()
         self.base_mask.dump()
+        self.full_heatmap.dump()
         
     def get_ood_activations(self, instance_list, frame, activations):
         ret = np.zeros((2, len(instance_list), 512))
@@ -204,6 +232,7 @@ class Result(PersistentDataClass):
         frame = pd.DataFrame(data)
         frame['Instances Fully Seen'] = self.num_fully_seen
         frame['Run'] = self.run
+        frame['Num'] = self.num
         frame['Free Axis'] = self.free_axis
         frame['Category'] = self.category
         return frame
@@ -214,9 +243,14 @@ class Result(PersistentDataClass):
                                             'Accuracy': [self.id_acc, self.ood_acc]})
     
     @property
-    def accuracy_frame(self):
-        return self.finalize_results_frame({'Orientation Set': ['Generalizable', 'Non-Generalizable'],
-                                            'Accuracy': [self.pred_acc, self.xpred_acc]})
+    def full_accuracy_frame(self):
+        return self.finalize_results_frame({'Orientation Set': ['Base', 'Generalizable', 'Non-Generalizable'],
+                                            'Accuracy': [self.full_base_acc, self.full_generalizable_acc, self.full_non_generalizable_acc]})
+    
+    @property
+    def partial_accuracy_frame(self):
+        return self.finalize_results_frame({'Orientation Set': ['Base', 'Generalizable', 'Non-Generalizable'],
+                                            'Accuracy': [self.partial_base_acc, self.partial_generalizable_acc, self.partial_non_generalizable_acc]})
     
     @property
     def correlation_frame(self):

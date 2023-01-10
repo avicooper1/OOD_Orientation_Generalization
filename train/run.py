@@ -7,16 +7,18 @@ from torch.nn import CrossEntropyLoss
 import sys
 import argparse
 from contextlib import redirect_stdout
+from losses import MyContrastiveLoss
+from torch import load
+
 
 if __name__ == '__main__':
-    
+
     matmul.allow_tf32 = True
 
     parser = argparse.ArgumentParser(description='Run an experiment')
     parser.add_argument('project_path', help='path to the project source directory')
     parser.add_argument('storage_path', help='path to the storage directory')
     parser.add_argument('job_id', type=int, help="slurm job id")
-    parser.add_argument('log_to_exp', type=bool, nargs='?', const=True, default=False)
 
     args = parser.parse_args()
 
@@ -38,7 +40,8 @@ if __name__ == '__main__':
                     match EXP_DATA.model_type:
                         case 'cornet':
                             model = CORnet_S()
-                            model.V1.conv1 = Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+                            model.V1.conv1 = Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2),
+                                                    padding=(3, 3), bias=False)
                             model.decoder.linear = Linear(in_features=512, out_features=50, bias=True)
                 case 1:
                     model = timm.create_model(EXP_DATA.model_type, in_chans=1,
@@ -48,10 +51,30 @@ if __name__ == '__main__':
                     print(f'Multiple timm models match model_type: {EXP_DATA.model_type}. Model choice is ambiguous. Exiting.')
                     exit(-1)
 
-            assert EXP_DATA.epochs_completed == 0, f'Already trained for {EXP_DATA.epochs_completed} epochs. We currently do not support reloading models during training.'
-
             model.cuda()
 
+            optimizer = Adam(model.parameters(), lr=0.01)
+
+            if EXP_DATA.complete:
+                print("Training has already completed. Exiting")
+                exit()
+
+            if EXP_DATA.epochs_completed > 0:
+                checkpoint = load(EXP_DATA.checkpoint)
+                model.load_state_dict(checkpoint['model_state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])  # I believe this is a no-op. checkpointing only
+                # happens after every epoch, and optimizer is zeroed at the beginning of each epoch
+
+                del checkpoint
+
+            match EXP_DATA.loss:
+                case 'CE':
+                    loss = CrossEntropyLoss()
+                case 'Contrastive':
+                    loss = MyContrastiveLoss()
+
             print('Beginning Training')
-            train(model, dataset, CrossEntropyLoss(), Adam(model.parameters(), lr=EXP_DATA.lr), EXP_DATA)
+            train(model, dataset, loss, optimizer, EXP_DATA)
+            EXP_DATA.complete = True
+            EXP_DATA.save()
             print('Completed Training')

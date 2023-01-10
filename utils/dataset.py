@@ -85,9 +85,10 @@ class RotationDataset:
         full_instances_frame = full_instances_frame[full_instances_frame.instance_name.isin(self.exp_data.full_instances)].copy()
         partial_instances_frame = partial_instances_frame[partial_instances_frame.instance_name.isin(self.exp_data.partial_instances)].copy()
         
-        full_training_frame_partition = np.random.choice(len(full_instances_frame), 10_000, replace=False)
         
-        self.exp_data.full_validation_frame.df = full_instances_frame.iloc[full_training_frame_partition].copy()
+        grouper = full_instances_frame.groupby([(full_instances_frame.cubelet_i // 2).astype(str), full_instances_frame.instance_name], sort=False)
+        
+        self.exp_data.full_validation_frame.df = grouper.sample(n=1)
 
         full_training_frame = full_instances_frame[~full_instances_frame.index.isin(self.exp_data.full_validation_frame.df.index)].copy()
         full_training_frame['weights'] = 1 / len(full_training_frame)
@@ -113,8 +114,8 @@ class RotationDataset:
             
         for frame in self.exp_data.frames:
             frame.dump()
-
-
+    
+    
 @dataclass
 class _Dataset(Dataset):
     name: str
@@ -137,29 +138,30 @@ class _Dataset(Dataset):
                                                         interpolation=InterpolationMode.BILINEAR)
         
         if self.preload_dataset:
-            for name, group in tqdm(self.frame.groupby('image_group'), file=sys.stdout, desc=f'Loading {self.name} dataset from group file'):
-
-                group_arr = Arr.from_path(group.image_group.iloc[0])
-                if self.group_cache is not None:
-                    if group_arr.file_path not in self.group_cache:
-                        self.group_cache[group_arr.file_path] = group_arr.arr
-                    loaded_images = self.group_cache[group_arr.file_path][group.image_idx]
-                    
-                else:
-                    loaded_images = group_arr.arr[group.image_idx]
+            
+            image_groups_to_load = [group_path for group_path in self.frame.image_group.unique() if group_path not in self.group_cache]
+            
+            if len(image_groups_to_load) > 0:
+                for group_path in tqdm(image_groups_to_load,
+                                       file=sys.stdout, 
+                                       desc=f'Loading {self.name} dataset from group file'):
+                    self.group_cache[group_path] = Arr.from_path(group_path).arr
                 
-                if self.loaded_dataset is None:
-                    self.loaded_dataset = cuda.ByteTensor(len(self.frame), loaded_images.shape[1], loaded_images.shape[1])
+            image_shape = next(iter(self.group_cache.values())).shape[1:]
+            self.loaded_dataset = cuda.ByteTensor(len(self.frame), image_shape[1], image_shape[1])
+            
+            for name, group in tqdm(self.frame.groupby('image_group'),
+                                    file=sys.stdout, 
+                                    desc=f'Sending {self.name} dataset to GPU'):
+                self.loaded_dataset[group.index] = cuda.ByteTensor(self.group_cache[name][group.image_idx])
                 
-                self.loaded_dataset[group.index] = cuda.ByteTensor(loaded_images)
-            if self.group_cache is not None:
-                del self.group_cache
+            del self.group_cache
 
     def get_img(self, idx):
         if self.preload_dataset:
             images = self.loaded_dataset[idx].float()
         else:
-            images = vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255
+            images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
 
         if type(idx) == int:
             images = unsqueeze(images, 0)

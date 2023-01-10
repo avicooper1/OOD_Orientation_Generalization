@@ -194,12 +194,14 @@ class ExpData(PersistentDataClass):
     base_orientations: [[[float]]] = None
     lr: float = 0.01
     batch_size: int = 128
-    max_epochs: int = 100
+    min_epochs: int = 100
+    max_epochs: int = 250
     full_instances: [str] = None
     held_instances: [str] = None
     partial_instances: [str] = None
     epochs_completed: int = 0
     create_exp: bool = False
+    complete: bool = False
 
     def __post_init__(self):
 

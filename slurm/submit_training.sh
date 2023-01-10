@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --time 10:00:00
-#SBATCH --array=[0-399,1080-1099]
+#SBATCH --time 20:00:00
+#SBATCH --array=[100-199]
 #SBATCH -c 4
 #SBATCH --mem=64G
 

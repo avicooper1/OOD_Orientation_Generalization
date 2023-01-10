@@ -88,16 +88,9 @@ class RotationDataset:
         
         grouper = full_instances_frame.groupby([(full_instances_frame.cubelet_i // 2).astype(str), full_instances_frame.instance_name], sort=False)
         
-        def group_random_sampler(group):
-            ret = np.zeros(len(group)).astype(bool)
-            ret[np.random.randint(0, len(group) - 1)] = True
-            return ret
-        
-        full_training_frame_partition = np.hstack([group_random_sampler(group) for _, group in grouper])
-        
-        self.exp_data.full_validation_frame.df = full_instances_frame.iloc[full_training_frame_partition].copy()
+        self.exp_data.full_validation_frame.df = grouper.sample(n=1)
 
-        full_training_frame = full_instances_frame[~full_training_frame_partition].copy()
+        full_training_frame = full_instances_frame[~full_instances_frame.index.isin(self.exp_data.full_validation_frame.df.index)].copy()
         full_training_frame['weights'] = 1 / len(full_training_frame)
         
         partial_base_mask = get_base_mask(partial_instances_frame, self.exp_data.base_orientations)

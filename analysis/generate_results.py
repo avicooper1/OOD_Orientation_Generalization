@@ -12,24 +12,28 @@ def process_job_i(a):
     job_i, args = a
     try:
         exp_data = ExpData.from_job_i(args.project_path, args.storage_path, job_i)
-    except:
+    except AssertionError:
         print(f'Experiment with id: {job_i} has not been run yet.')
         return
     
-    finished_training = (len(exp_data.eval_data.partial_ood_accuracies) > 0) and (len(exp_data.eval_data.partial_ood_accuracies) > exp_data.max_epochs or argmax(exp_data.eval_data.partial_ood_accuracies) < len(exp_data.eval_data.partial_ood_accuracies) - 5)
-    
-    if not finished_training:
-        print(f'Exp with job_i: {job_i}\n and dir {exp_data.dir}\n did not finish training. It trained for {len(exp_data.eval_data.partial_base_accuracies)} epochs, however it is meant to train for {exp_data.max_epochs}, and the last 5 accuracies were {exp_data.eval_data.partial_ood_accuracies[-5:]}')
-    
+    if not exp_data.complete:
+        print(f'Exp with job_i: {job_i}\n and dir {exp_data.dir}\n did not finish training. It trained for {len(exp_data.eval_data.partial_base_accuracies)} epochs, however it is meant to train for {exp_data.min_epochs}, and the last 7 accuracies were {exp_data.eval_data.partial_ood_accuracies[-7:]}')
+        return
+
     if args.train_check:
+        return
+    
+    if (not args.overwrite_results) and os.path.exists(Result.results_dir(exp_data)[0]):
         return
 
     if (args.overwrite_results or args.delete_results) and os.path.exists(Result.results_dir(exp_data)[0]):
         shutil.rmtree(Result.results_dir(exp_data)[0])
         if args.delete_results:
             return
-        
+    # try:
     Result.from_job_i(args.project_path, args.storage_path, job_i)
+    # except:
+        # print(f'Generating result with job_i {job_i} failed')
 
 
 if __name__ == '__main__':
@@ -62,9 +66,7 @@ if __name__ == '__main__':
     if args.job_i is not None:
         process_job_i((args.job_i, args))
     else:
-        # for exp_num, job_i in tqdm([(exp_num, job_i) for exp_num in args.nums for job_i in range(exp_num * jobs_per_num, (exp_num + 1) * jobs_per_num)]):
-        #         process_job_i((job_i, args))
-        with Pool(62) as pool:
+        with Pool(32) as pool:
             for _ in tqdm(pool.imap_unordered(process_job_i, ((job_i, args) for exp_num in args.nums for job_i in range(exp_num * jobs_per_num, (exp_num + 1) * jobs_per_num))), total=len(args.nums) * jobs_per_num):
                 pass
 

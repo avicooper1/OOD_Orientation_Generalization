@@ -7,36 +7,12 @@ from torch.nn import CrossEntropyLoss
 import sys
 import argparse
 from contextlib import redirect_stdout
-from torch import where, randint, square, stack, tensor, where
-from torch.nn import Module
-
-
-class MyContrastiveLoss(Module):
-    def __init__(self, temp=0.01):
-        super().__init__()
-        self.cross_entropy_loss = CrossEntropyLoss()
-        self.temp = temp
-
-
-    def pair_distance(self, index, label, class_map):
-        pairs = class_map[label]
-        if len(pairs) == 1:
-            return tensor(index).cuda()
-        return pairs[where(pairs != index)[0][randint(0, len(pairs) - 1, (1,))[0]]]
-
-
-    def forward(self, pre_projection_activations, post_projection_activations, labels):
-        class_map = [where(labels == x)[0] for x in range(50)]
-        pair_indexes = stack([self.pair_distance(index, label, class_map) for index, label in enumerate(labels)])
-        sum_square = square(pre_projection_activations - pre_projection_activations[pair_indexes]).sum(dim=1)
-        distance = where(sum_square == 0, 0.00001, sum_square).sqrt().sum()
-        return self.cross_entropy_loss(post_projection_activations, labels) + (self.temp * distance)
-
-
+from losses import MyContrastiveLoss
+from torch import load
 
 
 if __name__ == '__main__':
-    
+
     matmul.allow_tf32 = True
 
     parser = argparse.ArgumentParser(description='Run an experiment')
@@ -47,8 +23,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     sys.path.insert(0, args.project_path)
-
-    from SupContrast.losses import SupConLoss
 
     from train import train
     from utils.dataset import RotationDataset
@@ -66,7 +40,8 @@ if __name__ == '__main__':
                     match EXP_DATA.model_type:
                         case 'cornet':
                             model = CORnet_S()
-                            model.V1.conv1 = Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+                            model.V1.conv1 = Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2),
+                                                    padding=(3, 3), bias=False)
                             model.decoder.linear = Linear(in_features=512, out_features=50, bias=True)
                 case 1:
                     model = timm.create_model(EXP_DATA.model_type, in_chans=1,
@@ -76,9 +51,21 @@ if __name__ == '__main__':
                     print(f'Multiple timm models match model_type: {EXP_DATA.model_type}. Model choice is ambiguous. Exiting.')
                     exit(-1)
 
-            assert EXP_DATA.epochs_completed == 0, f'Already trained for {EXP_DATA.epochs_completed} epochs. We currently do not support reloading models during training.'
-
             model.cuda()
+
+            optimizer = Adam(model.parameters(), lr=0.01)
+
+            if EXP_DATA.complete:
+                print("Training has already completed. Exiting")
+                exit()
+
+            if EXP_DATA.epochs_completed > 0:
+                checkpoint = load(EXP_DATA.checkpoint)
+                model.load_state_dict(checkpoint['model_state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])  # I believe this is a no-op. checkpointing only
+                # happens after every epoch, and optimizer is zeroed at the beginning of each epoch
+
+                del checkpoint
 
             match EXP_DATA.loss:
                 case 'CE':
@@ -87,5 +74,7 @@ if __name__ == '__main__':
                     loss = MyContrastiveLoss()
 
             print('Beginning Training')
-            train(model, dataset, loss, Adam(model.parameters(), lr=0.01), EXP_DATA)
+            train(model, dataset, loss, optimizer, EXP_DATA)
+            EXP_DATA.complete = True
+            EXP_DATA.save()
             print('Completed Training')

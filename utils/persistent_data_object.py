@@ -147,9 +147,12 @@ class AnnotationFile(DF):
     converters: dict = field(default_factory=lambda: {"cubelet_i": literal_eval})
     delimiter: str = ';'
     storage_path: str = None
+    keep_cubelet_i_str: bool = False
 
     def setup(self, df):
         assert self.storage_path is not None
+        if self.keep_cubelet_i_str:
+            df['cubelet_i_str'] = df.cubelet_i
         df.cubelet_i = df.cubelet_i.apply(np.array)
         df.image_name = df.image_name.apply(lambda name: os.path.join(self.storage_path, name))
         if 'image_group' in df.columns:
@@ -161,5 +164,7 @@ class AnnotationFile(DF):
         df_to_write.image_name = df_to_write.image_name.apply(lambda name: get_path_components(name, 5))
         if 'image_group' in df_to_write.columns:
             df_to_write.image_group = df_to_write.image_group.apply(lambda group: get_path_components(group, 4))
+        if self.keep_cubelet_i_str:
+            assert False # TODO not implemented yet, but we should delete this column. Not sure any part of the codebase actually reaches here
         return df_to_write
         

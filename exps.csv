@@ -57,18 +57,25 @@ cornet,decoder.linear,plane,plane,32,,α,CE,
 cornet,decoder.linear,plane,plane,32,,β,CE,
 cornet,decoder.linear,plane,plane,32,,γ,CE,
 cornet,decoder.linear,plane,plane,32,,hole,CE,
+# contrastive loss
+resnet18,fc,plane,plane,32,,α,Contrastive,
+resnet18,fc,plane,plane,32,,β,Contrastive,
+resnet18,fc,plane,plane,32,,γ,Contrastive,
+resnet18,fc,plane,plane,32,,hole,Contrastive,
+# all fully seen
+resnet18,fc,all_fully_seen,all_fully_seen,32,,all_fully_seen,CE,
 # plane with sliver
-resnet18,fc,plane,plane,32,,α,CE,FALSE,FALSE,TRUE
-resnet18,fc,plane,plane,32,,β,CE,FALSE,FALSE,TRUE
-resnet18,fc,plane,plane,32,,γ,CE,FALSE,FALSE,TRUE
-resnet18,fc,plane,plane,32,,hole,CE,FALSE,FALSE,TRUE
+resnet18,fc,plane,plane,32,,α,CE,FALSE,FALSE,TRUE,
+resnet18,fc,plane,plane,32,,β,CE,FALSE,FALSE,TRUE,
+resnet18,fc,plane,plane,32,,γ,CE,FALSE,FALSE,TRUE,
+resnet18,fc,plane,plane,32,,hole,CE,FALSE,FALSE,TRUE,
 # plane with half-data
 resnet18,fc,plane,plane,32,,α,CE,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,β,CE,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,γ,CE,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,hole,CE,FALSE,FALSE,FALSE,TRUE
 # some tests with contrastive loss
-resnet18,fc,plane,plane,32,,α,Contrastive,
-resnet18,fc,plane,plane,32,,β,Contrastive,
-resnet18,fc,plane,plane,32,,γ,Contrastive,
-resnet18,fc,plane,plane,32,,hole,Contrastive,
+resnet18,fc,plane,plane,32,,α,Contrastive
+resnet18,fc,plane,plane,32,,β,Contrastive
+resnet18,fc,plane,plane,32,,γ,Contrastive
+resnet18,fc,plane,plane,32,,hole,Contrastive

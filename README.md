@@ -1,4 +1,4 @@
-For a demo jupyter notebook:
+/hFor a demo jupyter notebook:
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/avicooper1/OOD_Orientation_Generalization/blob/master/demo/demo.ipynb)
 
 # Rotation Generalization

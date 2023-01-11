@@ -238,28 +238,37 @@ class ExpData(PersistentDataClass):
 
     @classmethod
     def from_job_i(cls, project_path, storage_path, job_i, num_runs=5, create_exp=False):
-        return cls.from_num(project_path, storage_path, job_i // 20, ((job_i % 4) + 1) * 10, (job_i % (num_runs * 4)) // 4, create_exp)
+        return cls.from_num(project_path, storage_path, job_i // 20, ((job_i % 4) + 1) * 10,
+                            (job_i % (num_runs * 4)) // 4, create_exp)
     
     @classmethod
-    def from_num(cls, project_path, storage_path, exp_num, data_div, run, create_exp=False):
+    def from_num(cls, project_path, storage_path, exp_num, num_fully_seen, run, create_exp=False):
 
         exps = pd.read_csv(os.path.join(project_path, 'exps.csv'), comment='#')
         exp = exps.iloc[exp_num]
 
-        assert (type(exp.base_orientations) is str) ^ (type(exp.free_axis) is str), 'For each experiment, either a set of orientations or a free axis can be specified, but not both'
+        if exp.full_category == 'all_fully_seen':
 
-        if type(exp.base_orientations) is str:
-            base_orientations = literal_eval(exp.base_orientations)
+            base_orientations = None
+            exp.full_category = ['plane', 'SM', 'car', 'lamp'][(num_fully_seen // 10) - 1]
+            num_fully_seen = 50
+
         else:
-            match exp.free_axis:
-                case 'γ':
-                    base_orientations = [[[-5, 5]], [[-0.1, 0.1]], [[-0.25, 0.25]]]
-                case 'β':
-                    base_orientations = [[[-0.25, 0.25]], [[-5, 5]], [[-0.25, 0.25]]]
-                case 'α':
-                    base_orientations = [[[-0.25, 0.25]], [[-0.1, 0.1]], [[-5, 5]]]
-                case 'hole':
-                    base_orientations = [[[-1.8, -1.3]], [[-0.1, 0.1]], [[-5, 5]]]
+
+            assert (type(exp.base_orientations) is str) ^ (type(exp.free_axis) is str), 'For each experiment, either a set of orientations or a free axis can be specified, but not both'
+
+            if type(exp.base_orientations) is str:
+                base_orientations = literal_eval(exp.base_orientations)
+            else:
+                match exp.free_axis:
+                    case 'γ':
+                        base_orientations = [[[-5, 5]], [[-0.1, 0.1]], [[-0.25, 0.25]]]
+                    case 'β':
+                        base_orientations = [[[-0.25, 0.25]], [[-5, 5]], [[-0.25, 0.25]]]
+                    case 'α':
+                        base_orientations = [[[-0.25, 0.25]], [[-0.1, 0.1]], [[-5, 5]]]
+                    case 'hole':
+                        base_orientations = [[[-1.8, -1.3]], [[-0.1, 0.1]], [[-5, 5]]]
 
         def parse_flag(f):
             return (not pd.isna(f)) and bool(f)
@@ -267,7 +276,7 @@ class ExpData(PersistentDataClass):
         return cls(storage_path,
                    exp_num,
                    run,
-                   data_div,
+                   num_fully_seen,
                    exp.model_type,
                    exp.hook_layer,
                    exp.full_category,

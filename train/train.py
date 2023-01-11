@@ -1,13 +1,13 @@
 from functools import reduce
-from torch import no_grad, squeeze
+from torch import no_grad, squeeze, mean
 from tqdm.auto import tqdm
 import sys
 from utils.persistent_data_class import *
-import time
-from torch import save
+from torch import save, empty
+from math import ceil
 
 
-def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, num_batches=0, batch_activations=None):
+def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pbar, epoch_corrects=None, num_batches=None, batch_activations=None):
     
     if train_epoch:
         model.train()
@@ -15,15 +15,15 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
         model.eval()
 
     epoch_loss = 0.
-    all_predictions = []
-    all_targets = []
     batch_counter = 0
+    correct_counter = 0
+    total_counter = 0
 
     for images, targets in dataloader:
 
         targets = targets.cuda(non_blocking=True)
 
-        # TODO: Fix this. ie the dataloader shouldn't be adding an extra dimension
+        # TODO: Fix this. the dataloader shouldn't be adding an extra dimension
         if len(images.shape) > 4:
             images = images[0]
             targets = targets[0]
@@ -47,29 +47,36 @@ def run_epoch(exp_data, model, criterion, optimizer, train_epoch, dataloader, pb
 
         epoch_loss += current_loss
 
-        all_targets.append(targets.cpu().numpy())
-        all_predictions.append(predictions.argmax(dim=1).cpu().numpy())
+        batch_corrects = targets == predictions.argmax(dim=1)
+        correct_counter = batch_corrects.sum()
+        total_counter = len(targets)
+        if epoch_corrects is not None:
+            epoch_corrects[batch_counter][:len(targets)] = batch_corrects
 
         pbar.update()
         
         batch_counter += 1
-        if num_batches != 0 and batch_counter > num_batches:
+        if num_batches and batch_counter > num_batches:
             break
         
-    return np.round((epoch_loss / len(dataloader.dataset)).item(), 7), np.concatenate(all_targets) == np.concatenate(all_predictions)
+    return np.round((epoch_loss / total_counter).item(), 7), np.round((correct_counter / total_counter).item(), 7)
 
 
 def train(model, dataset, criterion, optimizer, exp_data):
 
-    epoch_activations = []
-    store_epoch_activations = False
+    activations = [empty(ceil(len(loader.dataset.frame) / exp_data.batch_size), exp_data.batch_size).cuda() for loader in dataset.data_loaders[1:]]
+    corrects = [empty(ceil(len(loader.dataset.frame) / exp_data.batch_size), exp_data.batch_size).cuda() for loader in dataset.data_loaders[1:]]
+    loader_index = None
+    activations_counter = 0
+    corrects_index = None
     batch_activations = [None]
 
     penultimate_layer = reduce(getattr, [model] + exp_data.hook_layer.split('.'))
     
     def store_activations(m, i, o):
-        if store_epoch_activations:
-            epoch_activations.append(squeeze(i[0]).detach().cpu().numpy())
+        if loader_index:
+            activations[loader_index][activations_counter][:i.shape[0]] = i
+            activations_counter += 1
         if exp_data.loss == 'Contrastive':
             batch_activations[0] = i
 
@@ -82,40 +89,34 @@ def train(model, dataset, criterion, optimizer, exp_data):
                       desc='Training epochs completed',
                       file=sys.stdout):
         with tqdm(total=total_num_batches, leave=False, file=sys.stdout) as pbar:
-            
-            store_epoch_activations = False
+
+            loader_index = None
 
             training_loss, training_accuracy = run_epoch(exp_data,
-                                                         model,
-                                                         criterion,
-                                                         optimizer,
-                                                         True,
-                                                         dataset.train_loader,
-                                                         pbar,
-                                                         num_training_batches,
-                                                         batch_activations)
+                                      model,
+                                      criterion,
+                                      optimizer,
+                                      True,
+                                      dataset.train_loader,
+                                      pbar,
+                                      num_batches=num_training_batches,
+                                      batch_activations=batch_activations)
             
             exp_data.eval_data.training_losses.append(training_loss)
             exp_data.eval_data.training_accuracies.append(np.mean(training_accuracy))
-            
-            store_epoch_activations = True
 
-            for dataloader, corrects, accuracies, losses, activations in list(zip(dataset.eval_loaders,
-                                                                                  exp_data.eval_data.corrects,
-                                                                                  exp_data.eval_data.accuracies,
-                                                                                  exp_data.eval_data.losses,
-                                                                                  exp_data.eval_data.activations)):
+            for loader_index, (dataloader,
+                               accuracies,
+                               losses) in enumerate(zip(dataset.eval_loaders,
+                                                             exp_data.eval_data.accuracies,
+                                                             exp_data.eval_data.losses)):
                 
-                epoch_activations = []
-                loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, batch_activations=batch_activations)
-                
-                accuracy = np.round(np.mean(epoch_corrects), 7)
+                activations_counter = 0
+                loader_corrects = corrects[loader_index]
+                loss, accuracy = run_epoch(exp_data, model, criterion, None, False, dataloader, pbar, epoch_corrects=loader_corrects, batch_activations=batch_activations)
                 
                 losses.append(loss)
                 accuracies.append(accuracy)
-                
-                corrects.temp_arr = epoch_corrects
-                activations.temp_arr = np.vstack(epoch_activations)
         
         exp_data.eval_data.validation_and_partial_base_accuracies.append(((exp_data.eval_data.full_validation_accuracies[-1] * len(exp_data.full_instances)) + exp_data.eval_data.partial_base_accuracies[-1] * len(exp_data.partial_instances)) / (len(exp_data.full_instances) + len(exp_data.partial_instances)))
         exp_data.eval_data.save()
@@ -123,11 +124,13 @@ def train(model, dataset, criterion, optimizer, exp_data):
         max_accuracy_index = np.argmax(exp_data.eval_data.validation_and_partial_base_accuracies)
         
         if max_accuracy_index == len(exp_data.eval_data.validation_and_partial_base_accuracies) - 1:
-            for corrects, activations in zip(exp_data.eval_data.corrects, exp_data.eval_data.activations):
-                corrects.arr = corrects.temp_arr
-                activations.arr = activations.temp_arr
+            for i, (loader_corrects, loader_activations) in enumerate(zip(exp_data.eval_data.corrects,
+                                                            exp_data.eval_data.activations)):
+                loader_corrects.arr = corrects[i].flatten().detach().cpu().numpy()
+                loader_activations.arr = activations[i].flatten().detach().cpu().numpy()
 
-        save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+        save({'model_state_dict': model.state_dict(),
+              'optimizer_state_dict': optimizer.state_dict()},
              exp_data.checkpoint)
 
         exp_data.epochs_completed = epoch + 1

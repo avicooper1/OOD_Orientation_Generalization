@@ -244,9 +244,6 @@ class ExpData(PersistentDataClass):
 	@classmethod
 	def from_num(cls, project_path, storage_path, exp_num, num_fully_seen, run, create_exp=False):
 
-		import warnings
-		warnings.simplefilter("error")
-
 		exps = pd.read_csv(os.path.join(project_path, 'exps.csv'), comment='#')
 		exp = exps.iloc[exp_num]
 

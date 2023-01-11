@@ -82,6 +82,10 @@ class RotationDataset:
 
             instances_frame = dataset_path.merged_annotation_file.df
 
+            self.exp_data.full_instances = instances_frame.instance_name.unique().tolist()
+            self.exp_data.held_instances = []
+            self.exp_data.partial_instances = []
+
             grouper = instances_frame.groupby([(instances_frame.cubelet_i // 2).astype(str), instances_frame.instance_name],
                                               sort=False)
 

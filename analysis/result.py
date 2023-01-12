@@ -50,6 +50,7 @@ class Result(PersistentDataClass):
     partial_generalizable_acc: float = None
     partial_non_generalizable_acc: float = None
     unif_corr: float = None
+    id_corr: float = None
     a_corr: float = None
     e_corr: float = None
     ae_corr: float = None
@@ -69,10 +70,15 @@ class Result(PersistentDataClass):
         self.run = self.exp_data.run
         self.free_axis = self.exp_data.free_axis
         self.category = self.exp_data.full_category if self.exp_data.full_category == self.exp_data.partial_category else f'{self.exp_data.full_category} -> {self.exp_data.partial_category}'
+        
+        try:
 
-        self.id_acc = self.exp_data.eval_data.partial_base_correct.arr.mean()
-        self.ood_acc = self.exp_data.eval_data.partial_ood_correct.arr.mean()
-
+            self.id_acc = self.exp_data.eval_data.partial_base_correct.arr.mean()
+            self.ood_acc = self.exp_data.eval_data.partial_ood_correct.arr.mean()
+        
+        except:
+            print(self.num, self.num_fully_seen, self.run)
+            exit()
         pred_func = np.load(pf_func_path(self.free_axis, self.project_path))
         pred_func_sigmoid = sigmoid_on_pf(pred_func, self.free_axis)
 
@@ -129,13 +135,14 @@ class Result(PersistentDataClass):
         self.full_base_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.base].index].mean()
         self.full_generalizable_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.generalizable & ~full_only_frame.base].index].mean()
         self.full_non_generalizable_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[~full_only_frame.generalizable & ~full_only_frame.base].index].mean()
-        self.unif_corr, self.a_corr, self.e_corr, self.ae_corr, self.all_corr = (corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape)),
+        self.unif_corr, self.id_corr, self.a_corr, self.e_corr, self.ae_corr, self.all_corr = (corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape)),
                                                                                  corr(self.partial_heatmap.arr, pred_func_sigmoid[0]),
                                                                                  corr(self.partial_heatmap.arr, pred_func_sigmoid[1]),
                                                                                  corr(self.partial_heatmap.arr,
                                                                                       np.max(pred_func_sigmoid[[0, 1]], axis=0)),
                                                                                  corr(self.partial_heatmap.arr,
-                                                                                      np.max(pred_func_sigmoid, axis=0)))
+                                                                                      np.max(pred_func_sigmoid, axis=0)),
+                                                                                corr(self.partial_heatmap.arr, self.full_heatmap.arr))
 
         max_act = np.stack([np.abs(activation.arr).max(axis=0) for activation in self.exp_data.eval_data.activations]).max(axis=0)
 

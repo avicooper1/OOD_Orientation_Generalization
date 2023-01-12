@@ -205,7 +205,7 @@ class ExpData(PersistentDataClass):
 
 	def __post_init__(self):
 
-		self.dir = os.path.join(self.path, f'experiments/exp{self.num}/{self.num_fully_seen}_fully_seen/run{self.run}')
+		self.dir = os.path.join(self.path, f'experiments/exp{self.num}/{str(self.num_fully_seen) + "_fully_seen" if self.partial_category != "all_fully_seen" else self.full_category}/run{self.run}')
 		self.store_path = os.path.join(self.dir, 'configuration.json')
 
 		assert os.path.exists(self.store_path) or self.create_exp, 'Parameters disallow creating this experiment'
@@ -320,11 +320,9 @@ class EvalData(PersistentDataClass):
 
 	validation_and_partial_base_accuracies: [float] = field(default_factory=list)
 
-
 	def __post_init__(self):
 		self.store_path = os.path.join(self.path, 'configuration.json')
 		super().__post_init__()
-
 
 	def initial_init(self):
 

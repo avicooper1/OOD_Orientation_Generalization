@@ -29,6 +29,9 @@ if __name__ == '__main__':
 	from utils.dataset import RotationDataset
 	from utils.persistent_data_class import ExpData
 
+	import torch.multiprocessing as mp
+	mp.set_start_method('spawn')
+
 	EXP_DATA = ExpData.from_job_i(args.project_path, args.storage_path, args.job_id, create_exp=True)
 
 	# with open(EXP_DATA.log, 'a') as out:

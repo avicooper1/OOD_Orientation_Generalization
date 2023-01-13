@@ -22,10 +22,10 @@ def run_epoch(exp_data, model, criterion, optimizer, scheduler, train_epoch, dat
 
 		targets = targets.cuda(non_blocking=True)
 
-		# TODO: Fix this. ie the dataloader shouldn't be adding an extra dimension
-		if len(images.shape) > 4:
-			images = images[0]
-			targets = targets[0]
+		# # TODO: Fix this. ie the dataloader shouldn't be adding an extra dimension
+		# if len(images.shape) > 4:
+		# 	images = images[0]
+		# 	targets = targets[0]
 
 		if train_epoch:
 			optimizer.zero_grad()
@@ -112,7 +112,7 @@ def train(model, dataset, criterion, optimizer, scheduler, exp_data):
 																				  exp_data.eval_data.activations)):
 
 				epoch_activations = []
- 				loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, None, False, dataloader, pbar, batch_activations=batch_activations)
+				loss, epoch_corrects = run_epoch(exp_data, model, criterion, None, None, False, dataloader, pbar, batch_activations=batch_activations)
 
 				accuracy = np.round(np.mean(epoch_corrects), 7)
 

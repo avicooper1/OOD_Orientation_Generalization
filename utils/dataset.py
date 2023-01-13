@@ -12,6 +12,7 @@ from tqdm import tqdm
 from utils.persistent_data_class import *
 from utils.tools import get_base_mask
 from tqdm.contrib.concurrent import process_map
+from torch import tensor
 
 
 def get_dataloader(dataset, shuffle, batch_size):
@@ -21,8 +22,14 @@ def get_dataloader(dataset, shuffle, batch_size):
 	else:
 		dataset_sampler = SequentialSampler(dataset)
 
+	# return DataLoader(dataset=dataset,
+	# 				  sampler=BatchSampler(dataset_sampler, batch_size, drop_last=False))
+
 	return DataLoader(dataset=dataset,
-					  sampler=BatchSampler(dataset_sampler, batch_size, drop_last=False))
+					  sampler=dataset_sampler,
+					  batch_size=batch_size,
+					  drop_last=False,
+					  num_workers=4)
 
 
 def get_image_group(group_path):
@@ -42,8 +49,7 @@ class RotationDataset:
 				self.setup_frames()
 				break
 
-		self.instance_codec = LabelEncoder()
-		self.instance_codec.fit((self.exp_data.full_instances + self.exp_data.held_instances) + self.exp_data.partial_instances)
+		self.instance_codec = {instance: i for i, instance in enumerate(self.exp_data.full_instances + self.exp_data.held_instances + self.exp_data.partial_instances)}
 
 		group_cache = {}
 
@@ -183,7 +189,7 @@ class _Dataset(Dataset):
 
 			image_shape = next(iter(self.group_cache.values())).shape[-1]
 
-			self.loaded_dataset = cuda.ByteTensor(len(self.frame), image_shape, image_shape)
+			self.loaded_dataset = cuda.ByteTensor(len(self.frame), image_shape, image_shape).share_memory_()
 
 			for group_path, group in tqdm(self.frame.groupby('image_group'),
 										  file=sys.stdout,
@@ -198,19 +204,18 @@ class _Dataset(Dataset):
 		else:
 			images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
 
-		if type(idx) == int:
-			images = unsqueeze(images, 0)
 
-		# images = self.transform(images.unsqueeze(1))
-		# images = transforms.Normalize(images.mean(), images.std())(images)
-		# return images
 
-		images = vstack([self.transform(image.unsqueeze(axis=0)) for image in images])
-		images = transforms.Normalize(tuple(images.mean((-2, -1))), tuple(images.std((-2, -1))))(images)
-		return images.unsqueeze(axis=1)
+		images = self.transform(images.unsqueeze(0))
+		images = transforms.Normalize(images.mean(), images.std())(images)
+		return images
+
+		# images = vstack([self.transform(image.unsqueeze(axis=0)) for image in images])
+		# images = transforms.Normalize(tuple(images.mean((-2, -1))), tuple(images.std((-2, -1))))(images)
+		# return images.unsqueeze(axis=1)
 
 	def __len__(self):
 		return len(self.frame)
 
 	def __getitem__(self, idx):
-		return self.get_img(idx), self.dataset.instance_codec.transform(self.frame.iloc[idx].instance_name)
+		return self.get_img(idx), self.dataset.instance_codec[self.frame.iloc[idx].instance_name]

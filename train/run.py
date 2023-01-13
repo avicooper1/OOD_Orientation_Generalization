@@ -10,6 +10,7 @@ import argparse
 from contextlib import redirect_stdout
 from losses import MyContrastiveLoss
 from torch import load
+from torch.autograd.profiler import profile
 
 
 if __name__ == '__main__':
@@ -77,9 +78,10 @@ if __name__ == '__main__':
 			loss = CrossEntropyLoss()
 		case 'Contrastive':
 			loss = MyContrastiveLoss()
-
-	print('Beginning Training')
-	train(model, dataset, loss, optimizer, scheduler, EXP_DATA)
-	EXP_DATA.complete = True
-	EXP_DATA.save()
-	print('Completed Training')
+	with profile(use_cuda=True) as prof:
+		print('Beginning Training')
+		train(model, dataset, loss, optimizer, scheduler, EXP_DATA)
+		EXP_DATA.complete = True
+		EXP_DATA.save()
+		print('Completed Training')
+	print(prof.key_averages().table(sort_by="self_cpu_time_total"))

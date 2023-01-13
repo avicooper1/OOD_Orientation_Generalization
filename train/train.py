@@ -99,6 +99,7 @@ def train(model, dataset, criterion, optimizer, scheduler, exp_data):
 														 pbar,
 														 num_batches=num_training_batches,
 														 batch_activations=batch_activations)
+			return
 
 			exp_data.eval_data.training_losses.append(training_loss)
 			exp_data.eval_data.training_accuracies.append(np.mean(training_accuracy))

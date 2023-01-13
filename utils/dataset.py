@@ -204,9 +204,8 @@ class _Dataset(Dataset):
 		else:
 			images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
 
-
-
-		images = self.transform(images.unsqueeze(0))
+		# images = self.transform(images.unsqueeze(0))
+		images = transforms.Pad(15)(images)
 		images = transforms.Normalize(images.mean(), images.std())(images)
 		return images
 

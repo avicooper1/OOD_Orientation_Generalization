@@ -30,9 +30,6 @@ if __name__ == '__main__':
 	from utils.dataset import RotationDataset
 	from utils.persistent_data_class import ExpData
 
-	import torch.multiprocessing as mp
-	mp.set_start_method('spawn')
-
 	EXP_DATA = ExpData.from_job_i(args.project_path, args.storage_path, args.job_id, create_exp=True)
 
 	# with open(EXP_DATA.log, 'a') as out:
@@ -78,10 +75,8 @@ if __name__ == '__main__':
 			loss = CrossEntropyLoss()
 		case 'Contrastive':
 			loss = MyContrastiveLoss()
-	with profile(use_cuda=True) as prof:
-		print('Beginning Training')
-		train(model, dataset, loss, optimizer, scheduler, EXP_DATA)
-		EXP_DATA.complete = True
-		EXP_DATA.save()
-		print('Completed Training')
-	print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+	print('Beginning Training')
+	train(model, dataset, loss, optimizer, scheduler, EXP_DATA)
+	EXP_DATA.complete = True
+	EXP_DATA.save()
+	print('Completed Training')

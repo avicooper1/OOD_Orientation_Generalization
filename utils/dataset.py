@@ -1,18 +1,16 @@
 import sys
-from torch import unsqueeze
-from torch import cuda, vstack, Tensor
+from torch import cuda, vstack
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.sampler import BatchSampler, WeightedRandomSampler, SequentialSampler
 from torchvision import transforms
 from torchvision.io import read_image
-from sklearn.preprocessing import LabelEncoder
 from torchvision.transforms import InterpolationMode
-from torch.nn import Sequential
 from tqdm import tqdm
 from utils.persistent_data_class import *
 from utils.tools import get_base_mask
 from tqdm.contrib.concurrent import process_map
-from torch import tensor
+from torch import tensor, empty
+import torch.multiprocessing as mp
 
 
 def get_dataloader(dataset, shuffle, batch_size):
@@ -22,14 +20,13 @@ def get_dataloader(dataset, shuffle, batch_size):
 	else:
 		dataset_sampler = SequentialSampler(dataset)
 
-	# return DataLoader(dataset=dataset,
-	# 				  sampler=BatchSampler(dataset_sampler, batch_size, drop_last=False))
-
 	return DataLoader(dataset=dataset,
-					  sampler=dataset_sampler,
-					  batch_size=batch_size,
-					  drop_last=False,
-					  num_workers=4)
+					  sampler=BatchSampler(dataset_sampler, batch_size, drop_last=False))
+
+
+def perform_transforms(args):
+	images, image_idx, random_affine_transform = args
+	images[image_idx] = random_affine_transform(images[image_idx])
 
 
 def get_image_group(group_path):
@@ -40,7 +37,9 @@ def get_image_group(group_path):
 class RotationDataset:
 
 	exp_data: ExpData
+	num_workers: int = 8
 	preload_dataset: bool = True
+	pool: mp.Pool = None
 
 	def __post_init__(self):
 
@@ -55,16 +54,19 @@ class RotationDataset:
 
 		if self.preload_dataset:
 
+			mp.set_start_method('spawn')
+			self.pool = mp.Pool(self.num_workers)
+
 			for group_path, arr in process_map(get_image_group,
 											   self.exp_data.training_frame.df.image_group.unique(),
 											   # np.concatenate((self.exp_data.training_frame.df.image_group.unique(),
 												# 			   self.exp_data.partial_ood_frame.df.image_group.unique())),
-											   max_workers=4,
+											   max_workers=self.num_workers,
 											   file=sys.stdout,
 											   desc=f'Loading image groups from storage'):
 				group_cache[group_path] = arr
 
-		self.datasets = [_Dataset(name, self, frame.df, self.preload_dataset, group_cache)
+		self.datasets = [_Dataset(name, self, frame.df, self.preload_dataset, group_cache, self.pool)
 						 for frame, name in zip(self.exp_data.frames, (['training',
 																		'full validation',
 																		'partial base',
@@ -170,7 +172,10 @@ class _Dataset(Dataset):
 	frame: pd.DataFrame
 	preload_dataset: bool
 	group_cache: {str: object} = None
+	pool: mp.Pool = None
 	loaded_dataset: cuda.ByteTensor = None
+	loaded_targets: cuda.LongTensor = None
+	current_batch: tensor = None
 
 	def __post_init__(self):
 		self.frame.reset_index(drop=True, inplace=True)
@@ -179,42 +184,47 @@ class _Dataset(Dataset):
 		# Images are 224x224 pixels. 20 / 224 ~ 0.089, which allows for up to this much translation without losing
 		# parts of the object
 		# TODO We do implement scaling. Are we ok if parts of the image might be lost? Confirm these parameters
-		self.transform = Sequential(transforms.Pad(15),
-									transforms.RandomAffine(degrees=(-180, 180) if self.dataset.exp_data.augment and (self.name == 'training') else 0,
+		self.pad_transform = transforms.Pad(15)
+		self.random_affine_transform = transforms.RandomAffine(degrees=(-180, 180) if self.dataset.exp_data.augment and (self.name == 'training') else 0,
 															translate=(0.08, 0.08),
 															scale=(0.8, 1.2),
-															interpolation=InterpolationMode.BILINEAR))
+															interpolation=InterpolationMode.BILINEAR)
 
 		if self.preload_dataset:
 
 			image_shape = next(iter(self.group_cache.values())).shape[-1]
 
-			self.loaded_dataset = cuda.ByteTensor(len(self.frame), image_shape, image_shape).share_memory_()
+			self.loaded_dataset = cuda.ByteTensor(len(self.frame), image_shape, image_shape)
+			self.loaded_targets = cuda.LongTensor(len(self.frame)).cuda()
 
-			for group_path, group in tqdm(self.frame.groupby('image_group'),
+			for (group_path, instance_name), group in tqdm(self.frame.groupby(['image_group', 'instance_name']),
 										  file=sys.stdout,
 										  desc=f'Sending {self.name} dataset to GPU'):
 				self.loaded_dataset[group.index] = cuda.ByteTensor(self.group_cache[group_path][group.image_idx.values])
+				self.loaded_targets[group.index] = self.dataset.instance_codec[instance_name]
 
 			del self.group_cache
 
-	def get_img(self, idx):
-		if self.preload_dataset:
-			images = self.loaded_dataset[idx].float() / 255
-		else:
-			images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
-
-		# images = self.transform(images.unsqueeze(0))
-		images = transforms.Pad(15)(images)
-		images = transforms.Normalize(images.mean(), images.std())(images)
-		return images
-
-		# images = vstack([self.transform(image.unsqueeze(axis=0)) for image in images])
-		# images = transforms.Normalize(tuple(images.mean((-2, -1))), tuple(images.std((-2, -1))))(images)
-		# return images.unsqueeze(axis=1)
+		self.batch = empty((self.dataset.exp_data.batch_size, 1, 224, 224)).cuda().share_memory_()
 
 	def __len__(self):
 		return len(self.frame)
 
 	def __getitem__(self, idx):
-		return self.get_img(idx), self.dataset.instance_codec[self.frame.iloc[idx].instance_name]
+
+		if self.preload_dataset:
+			images = self.loaded_dataset[idx].float() / 255
+		else:
+			images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
+
+		images = images.unsqueeze(axis=1)
+		self.batch[:len(idx)] = transforms.Pad(15)(images)
+
+		self.pool.imap_unordered(perform_transforms,
+								 ((self.batch, image_idx, self.random_affine_transform) for image_idx in
+								  range(len(idx))), chunksize=4)
+
+		self.batch[:] = (self.batch - self.batch.mean((-2, -1)).unsqueeze(2).unsqueeze(3)) / self.batch.std(
+			(-2, -1)).unsqueeze(2).unsqueeze(3)
+
+		return self.batch[:len(idx)], self.loaded_targets[idx]

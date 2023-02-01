@@ -9,23 +9,47 @@ from predictive_function.tools import pf_func_path, sigmoid_on_pf
 
 
 def corr(arr1, arr2):
-    return np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1]
+    try:
+        return float(np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1])
+    except:
+        return None
 
 
-def inv_sel_score(pre_act, pre_mask, post_act, post_mask):
-    out = np.full(np.broadcast(pre_act, post_act).shape, np.nan)
+def inv_sel_score(pre_act, pre_mask, post_act, post_mask, or_op=True):
+    
     return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
-                                out=out,
+                                out=np.full(np.broadcast(pre_act, post_act).shape, 0.0),
+                                where=((post_act + pre_act) != 0)))
+    
+    return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
+                                out=np.full(np.broadcast(pre_act, post_act).shape, np.nan),
                                 where=((post_act + pre_act) != 0) & (pre_mask | post_mask)))
 
-
 def calc_selectivity(pre_act, pre_mask, post_act, post_mask):
-    pre_maxes = pre_act.argmax(axis=0, keepdims=True)
-    post_maxes = post_act.argmax(axis=0, keepdims=True)
-    return inv_sel_score(np.take_along_axis(pre_act, pre_maxes, axis=0)[0],
-                         np.take_along_axis(pre_mask, pre_maxes, axis=0)[0],
-                         np.take_along_axis(post_act, post_maxes, axis=0)[0],
-                         np.take_along_axis(post_mask, post_maxes, axis=0)[0])
+    expanded_pre_act = pre_act[np.newaxis]
+    expanded_post_act = post_act[:,np.newaxis]
+    score = inv_sel_score(expanded_pre_act, None, expanded_post_act, None)
+    return np.average(score, weights=expanded_pre_act + expanded_post_act + 0.0000000000001, axis=1)
+   
+#     # score = inv_sel_score(pre_act[np.newaxis], pre_mask[np.newaxis], post_act[:, np.newaxis], post_mask[:, np.newaxis])
+#     # print(np.nanmax(score, axis=(1, 2)).shape)
+#     # return np.nanmean(np.nanmax(score, axis=(1, 2)))
+
+#     # diffs = np.abs(pre_act[np.newaxis] - post_act[:, np.newaxis])
+#     # 
+#     # return 1 - np.divide(diffs.mean(axis=(0, 1)), diffs.max(axis=(0, 1)), where=diffs.max(axis=(0, 1))!=0)
+
+#     pre_maxes = pre_act.argmax(axis=0, keepdims=True)
+#     post_maxes = post_act.argmax(axis=0, keepdims=True)
+#     score = inv_sel_score(np.take_along_axis(pre_act, pre_maxes, axis=0),
+#                          np.take_along_axis(pre_mask, pre_maxes, axis=0),
+#                          np.take_along_axis(post_act, post_maxes, axis=0),
+#                          np.take_along_axis(post_mask, post_maxes, axis=0))
+#     print(np.mean(np.isnan(score)))
+#     return np.nanmean(score)
+    return inv_sel_score(pre_act[np.newaxis], pre_mask[np.newaxis], post_act[:, np.newaxis], post_mask[:, np.newaxis], False)
+    # return np.mean(pre_mask[np.newaxis] & post_mask[:, np.newaxis]) / np.mean(pre_mask[np.newaxis] | post_mask[:, np.newaxis])
+    # return np.mean(np.sqrt(pre_mask[np.newaxis] * post_mask[:, np.newaxis]) / (pre_mask[np.newaxis] + post_mask[:, np.newaxis]))
 
 
 @dataclass
@@ -73,12 +97,13 @@ class Result(PersistentDataClass):
         
         try:
 
-            self.id_acc = self.exp_data.eval_data.partial_base_correct.arr.mean()
-            self.ood_acc = self.exp_data.eval_data.partial_ood_correct.arr.mean()
+            self.id_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
+            self.ood_acc = float(self.exp_data.eval_data.partial_ood_correct.arr.mean())
         
         except:
             print(self.num, self.num_fully_seen, self.run)
             exit()
+            
         pred_func = np.load(pf_func_path(self.free_axis, self.project_path))
         pred_func_sigmoid = sigmoid_on_pf(pred_func, self.free_axis)
 
@@ -128,21 +153,22 @@ class Result(PersistentDataClass):
             self.full_heatmap.arr[flat_cubelet_i] = self.exp_data.eval_data.full_validation_correct.arr[indices].mean()
         self.full_heatmap.arr = self.full_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
 
-        self.partial_base_acc = self.exp_data.eval_data.partial_base_correct.arr.mean()
-        self.partial_generalizable_acc = self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[self.exp_data.partial_ood_frame.df.generalizable].index].mean()
-        self.partial_non_generalizable_acc = self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[~self.exp_data.partial_ood_frame.df.generalizable].index].mean()
+        self.partial_base_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
+        self.partial_generalizable_acc = float(self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[self.exp_data.partial_ood_frame.df.generalizable].index].mean())
+        self.partial_non_generalizable_acc = float(self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[~self.exp_data.partial_ood_frame.df.generalizable].index].mean())
 
-        self.full_base_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.base].index].mean()
-        self.full_generalizable_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.generalizable & ~full_only_frame.base].index].mean()
-        self.full_non_generalizable_acc = self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[~full_only_frame.generalizable & ~full_only_frame.base].index].mean()
-        self.unif_corr, self.id_corr, self.a_corr, self.e_corr, self.ae_corr, self.all_corr = (corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape)),
+        self.full_base_acc = float(self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.base].index].mean())
+        self.full_generalizable_acc = float(self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.generalizable & ~full_only_frame.base].index].mean())
+        self.full_non_generalizable_acc = float(self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[~full_only_frame.generalizable & ~full_only_frame.base].index].mean())
+        
+        self.unif_corr, self.a_corr, self.e_corr, self.ae_corr, self.all_corr, self.id_corr = (corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape)),
                                                                                  corr(self.partial_heatmap.arr, pred_func_sigmoid[0]),
                                                                                  corr(self.partial_heatmap.arr, pred_func_sigmoid[1]),
                                                                                  corr(self.partial_heatmap.arr,
                                                                                       np.max(pred_func_sigmoid[[0, 1]], axis=0)),
                                                                                  corr(self.partial_heatmap.arr,
                                                                                       np.max(pred_func_sigmoid, axis=0)),
-                                                                                corr(self.partial_heatmap.arr, self.full_heatmap.arr))
+                                                                                corr(np.nanmean(self.full_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(1,3,5)), np.mean(self.partial_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(1, 3, 5))))
 
         max_act = np.stack([np.abs(activation.arr).max(axis=0) for activation in self.exp_data.eval_data.activations]).max(axis=0)
 
@@ -183,27 +209,51 @@ class Result(PersistentDataClass):
         thresh_mask = {k: v > threshold for k, v in acts.items()}
 
         self.selectivity = {k: v.mean() for k, v in thresh_mask.items()}
-        self.invariance = {f'{k1}_{k2}': np.nanmean(inv_sel_score(acts[k1],
+        
+        self.invariance = {f'{k1}_{k2}': np.average(inv_sel_score(acts[k1],
                                                                   thresh_mask[k1],
                                                                   acts[k2],
-                                                                  thresh_mask[k2])) for k1, k2 in [('fb', 'fg'),
+                                                                  thresh_mask[k2]), weights=(acts[k1] + acts[k2])) for k1, k2 in [('fb', 'fg'),
                                                                                                    ('fb', 'fn'),
-                                                                                                   ('fg', 'fn'),
                                                                                                    ('pb', 'pg'),
-                                                                                                   ('pb', 'pn'),
-                                                                                                   ('pg', 'pn')]}
-
+                                                                                                   ('pb', 'pn')]}
+        
+        def only_one(a, b, t):
+            a_any_inv_mask = np.any(~np.isnan(a), axis=0)
+            b_any_inv_mask = np.any(~np.isnan(b), axis=0)
+            if t == 'first':
+                return a_any_inv_mask & ~b_any_inv_mask
+            if t == 'second':
+                return ~a_any_inv_mask & b_any_inv_mask
+            if t == 'both':
+                return a_any_inv_mask & b_any_inv_mask
+            if t == 'neither':
+                return ~a_any_inv_mask & ~b_any_inv_mask
+        
+        # self.invariance = {k: np.nanmean(v) for k, v in inv.items()}
+        # self.invariance_only_partial = {k: np.nanmean(inv[k][:, only_one(inv['fb_fg'], inv[k], 'second')]) for k in ['pb_pg', 'pb_pn']}
+        # self.invariance_only_full = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'first')]) for k in ['pb_pg', 'pb_pn']}
+        # self.invariance_both = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'both')]) for k in ['pb_pg', 'pb_pn']}
+        # self.invariance_neither = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'neithersl')]) for k in ['pb_pg', 'pb_pn']}
+    
+        
         self.mixed_selectivity = {f'{k1}_{k2}':
-                                      np.nanmean(calc_selectivity(acts[k1],
-                                                                  thresh_mask[k1],
-                                                                  acts[k2],
-                                                                  thresh_mask[k2])) for k1, k2 in [('fb', 'pb'),
-                                                                                                   ('fg', 'pg'),
-                                                                                                   ('fn', 'pn')]}
+                                  np.nanmean(calc_selectivity(acts[k1],
+                                                   thresh_mask[k1],
+                                                   acts[k2],
+                                                   thresh_mask[k2])) for k1, k2 in [('fb', 'pb'),
+                                                                                   ('fg', 'pg'),
+                                                                                   ('fn', 'pn')]}
+#         self.acts = acts
+#         self.thresh_mask = thresh_mask
+        
+#         import pickle 
+#         with open('/home/avic/result2', 'wb') as f:
+#             pickle.dump(self, f)
 
-        self.partial_heatmap.dump()
-        self.base_mask.dump()
-        self.full_heatmap.dump()
+        # self.partial_heatmap.dump()
+        # self.base_mask.dump()
+        # self.full_heatmap.dump()
 
     @staticmethod
     def get_ood_activations(instance_list, frame, activations):
@@ -250,11 +300,13 @@ class Result(PersistentDataClass):
     @property
     def correlation_frame(self):
         return self.finalize_results_frame({'Predictive Model Component': ['Random Uniform',
+                                                                           'In-Distribution',
                                                                            'Small Angle',
                                                                            'In Plane',
                                                                            'Small Angle + In Plane',
                                                                            'All Components'],
                                             'Correlation': [self.unif_corr,
+                                                            self.id_corr,
                                                             self.a_corr,
                                                             self.e_corr,
                                                             self.ae_corr,
@@ -288,16 +340,43 @@ class Result(PersistentDataClass):
     @property
     def invariance_frame(self):
         keys = self.invariance.keys()
-        return self.finalize_results_frame({'Instance Transform': [f'{self.k_to_instance(k[0])} -> {self.k_to_instance(k[3])}' for k in keys],
-                                            'Orientation Transform': [f'{self.k_to_orientation(k[1])} -> {self.k_to_orientation(k[4])}' for k in keys],
+        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
+                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
                                             'Invariance': [self.invariance[k] for k in keys]})
+    
+    @property
+    def invariance_only_partial_frame(self):
+        keys = self.invariance_only_partial.keys()
+        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
+                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
+                                            'Invariance': [self.invariance_only_partial[k] for k in keys]})
+    
+    @property
+    def invariance_only_full_frame(self):
+        keys = self.invariance_only_full.keys()
+        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
+                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
+                                            'Invariance': [self.invariance_only_full[k] for k in keys]})
+    
+    @property
+    def invariance_both_frame(self):
+        keys = self.invariance_both.keys()
+        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
+                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
+                                            'Invariance': [self.invariance_both[k] for k in keys]})
+    
+    @property
+    def invariance_neither_frame(self):
+        keys = self.invariance_neither.keys()
+        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
+                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
+                                            'Invariance': [self.invariance_neither[k] for k in keys]})
 
     @property
     def mixed_selectivity_frame(self):
         keys = self.mixed_selectivity.keys()
-        return self.finalize_results_frame({'Instance Transform': [f'{self.k_to_instance(k[0])} -> {self.k_to_instance(k[3])}' for k in keys],
-               'Orientation Transform': [f'{self.k_to_orientation(k[1])} -> {self.k_to_orientation(k[4])}' for k in keys],
-               'Mixed Selectivity': [self.mixed_selectivity[k] for k in keys]})
+        return self.finalize_results_frame({'Orientation': [self.k_to_orientation(k[1])  for k in keys],
+                                            'Mixed Selectivity': [self.mixed_selectivity[k] for k in keys]})
 
     @classmethod
     def from_job_i(cls, project_path, storage_path, job_i, num_runs=5):

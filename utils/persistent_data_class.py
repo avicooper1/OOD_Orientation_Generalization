@@ -215,6 +215,7 @@ class ExpData(PersistentDataClass):
 	def initial_init(self):
 		self.log = os.path.join(self.dir, 'log.txt')
 		self.checkpoint = os.path.join(self.dir, 'checkpoint.pt')
+		self.peak_checkpoint = os.path.join(self.dir, 'peak_checkpoint.pt')
 
 		self.frames_dir = os.path.join(self.dir, 'frames')
 		os.makedirs(self.frames_dir, exist_ok=True)

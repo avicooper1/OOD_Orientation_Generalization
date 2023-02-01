@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --time 10:00:00
-#SBATCH --array=[0-99]
-#SBATCH -c 9
+#SBATCH --time 20:00:00
+#SBATCH --array=[680-919]
+#SBATCH -c 4
 #SBATCH --mem=80G
 
 #SBATCH --gres=gpu:1

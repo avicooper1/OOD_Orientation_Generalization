@@ -24,7 +24,7 @@ def get_dataloader(dataset, shuffle, batch_size):
 					  sampler=BatchSampler(dataset_sampler, batch_size, drop_last=False))
 
 
-def perform_transforms(args):
+def affine_transforms(args):
 	images, image_idx, random_affine_transform = args
 	images[image_idx] = random_affine_transform(images[image_idx])
 
@@ -37,7 +37,7 @@ def get_image_group(group_path):
 class RotationDataset:
 
 	exp_data: ExpData
-	num_workers: int = 8
+	num_workers: int = 4
 	preload_dataset: bool = True
 	pool: mp.Pool = None
 
@@ -66,7 +66,7 @@ class RotationDataset:
 											   desc=f'Loading image groups from storage'):
 				group_cache[group_path] = arr
 
-		self.datasets = [_Dataset(name, self, frame.df, self.preload_dataset, group_cache, self.pool)
+		self.datasets = [_Dataset(name, self, frame.df, self.preload_dataset, group_cache)
 						 for frame, name in zip(self.exp_data.frames, (['training',
 																		'full validation',
 																		'partial base',
@@ -172,7 +172,6 @@ class _Dataset(Dataset):
 	frame: pd.DataFrame
 	preload_dataset: bool
 	group_cache: {str: object} = None
-	pool: mp.Pool = None
 	loaded_dataset: cuda.ByteTensor = None
 	loaded_targets: cuda.LongTensor = None
 	current_batch: tensor = None
@@ -195,7 +194,7 @@ class _Dataset(Dataset):
 			image_shape = next(iter(self.group_cache.values())).shape[-1]
 
 			self.loaded_dataset = cuda.ByteTensor(len(self.frame), image_shape, image_shape)
-			self.loaded_targets = cuda.LongTensor(len(self.frame)).cuda()
+			self.loaded_targets = cuda.LongTensor(len(self.frame))
 
 			for (group_path, instance_name), group in tqdm(self.frame.groupby(['image_group', 'instance_name']),
 										  file=sys.stdout,
@@ -218,11 +217,9 @@ class _Dataset(Dataset):
 			images = (vstack([read_image(name) for name in self.frame.iloc[idx].image_name]) / 255).cuda()
 
 		images = images.unsqueeze(axis=1)
-		self.batch[:len(idx)] = transforms.Pad(15)(images)
+		self.batch[:len(idx)] = self.pad_transform(images)
 
-		self.pool.imap_unordered(perform_transforms,
-								 ((self.batch, image_idx, self.random_affine_transform) for image_idx in
-								  range(len(idx))), chunksize=4)
+		list(map(affine_transforms, ((self.batch, image_idx, self.random_affine_transform) for image_idx in range(len(idx)))))
 
 		self.batch[:] = (self.batch - self.batch.mean((-2, -1)).unsqueeze(2).unsqueeze(3)) / self.batch.std(
 			(-2, -1)).unsqueeze(2).unsqueeze(3)

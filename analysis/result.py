@@ -15,11 +15,11 @@ def corr(arr1, arr2):
         return None
 
 
-def inv_sel_score(pre_act, pre_mask, post_act, post_mask, or_op=True):
+def inv_sel_score(pre_act, pre_mask, post_act, post_mask):
     
-    return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
-                                out=np.full(np.broadcast(pre_act, post_act).shape, 0.0),
-                                where=((post_act + pre_act) != 0)))
+    # return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
+    #                             out=np.full(np.broadcast(pre_act, post_act).shape, 0.0),
+    #                             where=((post_act + pre_act) != 0)))
     
     return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
                                 out=np.full(np.broadcast(pre_act, post_act).shape, np.nan),
@@ -65,8 +65,12 @@ class Result(PersistentDataClass):
     run: int = None
     free_axis: str = None
     category: str = None
-    id_acc: float = None
-    ood_acc: float = None
+    model_type: str = None
+    loss: str = None
+    full_id_acc: float = None
+    full_ood_acc: float = None
+    partial_id_acc: float = None
+    partial_ood_acc: float = None
     full_base_acc: float = None
     full_generalizable_acc: float = None
     full_non_generalizable_acc: float = None
@@ -94,14 +98,14 @@ class Result(PersistentDataClass):
         self.run = self.exp_data.run
         self.free_axis = self.exp_data.free_axis
         self.category = self.exp_data.full_category if self.exp_data.full_category == self.exp_data.partial_category else f'{self.exp_data.full_category} -> {self.exp_data.partial_category}'
+        self.model_type = self.exp_data.model_type
+        self.loss = self.exp_data.loss
         
         try:
-
-            self.id_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
-            self.ood_acc = float(self.exp_data.eval_data.partial_ood_correct.arr.mean())
-        
+            self.full_id_acc = float(self.exp_data.eval_data.full_validation_correct.arr.mean())
+            self.partial_id_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
+            self.partial_ood_acc = float(self.exp_data.eval_data.partial_ood_correct.arr.mean())
         except:
-            print(self.num, self.num_fully_seen, self.run)
             exit()
             
         pred_func = np.load(pf_func_path(self.free_axis, self.project_path))
@@ -210,25 +214,25 @@ class Result(PersistentDataClass):
 
         self.selectivity = {k: v.mean() for k, v in thresh_mask.items()}
         
-        self.invariance = {f'{k1}_{k2}': np.average(inv_sel_score(acts[k1],
+        self.invariance = {f'{k1}_{k2}': np.nanmean(inv_sel_score(acts[k1],
                                                                   thresh_mask[k1],
                                                                   acts[k2],
-                                                                  thresh_mask[k2]), weights=(acts[k1] + acts[k2])) for k1, k2 in [('fb', 'fg'),
+                                                                  thresh_mask[k2])) for k1, k2 in [('fb', 'fg'),
                                                                                                    ('fb', 'fn'),
                                                                                                    ('pb', 'pg'),
                                                                                                    ('pb', 'pn')]}
         
-        def only_one(a, b, t):
-            a_any_inv_mask = np.any(~np.isnan(a), axis=0)
-            b_any_inv_mask = np.any(~np.isnan(b), axis=0)
-            if t == 'first':
-                return a_any_inv_mask & ~b_any_inv_mask
-            if t == 'second':
-                return ~a_any_inv_mask & b_any_inv_mask
-            if t == 'both':
-                return a_any_inv_mask & b_any_inv_mask
-            if t == 'neither':
-                return ~a_any_inv_mask & ~b_any_inv_mask
+        # def only_one(a, b, t):
+        #     a_any_inv_mask = np.any(~np.isnan(a), axis=0)
+        #     b_any_inv_mask = np.any(~np.isnan(b), axis=0)
+        #     if t == 'first':
+        #         return a_any_inv_mask & ~b_any_inv_mask
+        #     if t == 'second':
+        #         return ~a_any_inv_mask & b_any_inv_mask
+        #     if t == 'both':
+        #         return a_any_inv_mask & b_any_inv_mask
+        #     if t == 'neither':
+        #         return ~a_any_inv_mask & ~b_any_inv_mask
         
         # self.invariance = {k: np.nanmean(v) for k, v in inv.items()}
         # self.invariance_only_partial = {k: np.nanmean(inv[k][:, only_one(inv['fb_fg'], inv[k], 'second')]) for k in ['pb_pg', 'pb_pn']}
@@ -237,13 +241,13 @@ class Result(PersistentDataClass):
         # self.invariance_neither = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'neithersl')]) for k in ['pb_pg', 'pb_pn']}
     
         
-        self.mixed_selectivity = {f'{k1}_{k2}':
-                                  np.nanmean(calc_selectivity(acts[k1],
-                                                   thresh_mask[k1],
-                                                   acts[k2],
-                                                   thresh_mask[k2])) for k1, k2 in [('fb', 'pb'),
-                                                                                   ('fg', 'pg'),
-                                                                                   ('fn', 'pn')]}
+        # self.mixed_selectivity = {f'{k1}_{k2}':
+        #                           np.nanmean(calc_selectivity(acts[k1],
+        #                                            thresh_mask[k1],
+        #                                            acts[k2],
+        #                                            thresh_mask[k2])) for k1, k2 in [('fb', 'pb'),
+        #                                                                            ('fg', 'pg'),
+        #                                                                            ('fn', 'pn')]}
 #         self.acts = acts
 #         self.thresh_mask = thresh_mask
         
@@ -251,13 +255,13 @@ class Result(PersistentDataClass):
 #         with open('/home/avic/result2', 'wb') as f:
 #             pickle.dump(self, f)
 
-        # self.partial_heatmap.dump()
-        # self.base_mask.dump()
-        # self.full_heatmap.dump()
+        self.partial_heatmap.dump()
+        self.base_mask.dump()
+        self.full_heatmap.dump()
 
     @staticmethod
     def get_ood_activations(instance_list, frame, activations):
-        ret = np.full((2, len(instance_list), 512), np.nan)
+        ret = np.full((2, len(instance_list), activations.arr.shape[1]), np.nan)
 
         df = frame.df[~frame.df.base] if 'base' in frame.df.columns else frame.df
 
@@ -269,7 +273,7 @@ class Result(PersistentDataClass):
 
     @staticmethod
     def get_base_activations(instance_list, frame, activations):
-        ret = np.full((len(instance_list), 512), np.nan)
+        ret = np.full((len(instance_list), activations.arr.shape[1]), np.nan)
 
         df = frame.df[frame.df.base] if 'base' in frame.df.columns else frame.df
 
@@ -282,17 +286,27 @@ class Result(PersistentDataClass):
         frame['Instances Fully Seen'] = self.num_fully_seen
         frame['Run'] = self.run
         frame['Num'] = self.num
+        frame['Model Type'] = self.model_type
+        frame['Loss'] = self.loss
         frame['Free Axis'] = self.free_axis
         frame['Category'] = self.category
         return frame
 
     @property
     def accuracy_frame(self):
-        return self.finalize_results_frame({'Instance': (['Full'] * 3) + (['Partial'] * 3),
-                                            'Orientation': ['Base', 'Generalizable', 'Non-Generalizable'] * 2,
-                                            'Accuracy': [self.full_base_acc,
+        return self.finalize_results_frame({'Instance': (['Full'] * 5) + (['Partial'] * 5),
+                                            'Orientation': ['In Distribution', 
+                                                            'Out of Distribution',
+                                                            'Base', 
+                                                            'Generalizable', 
+                                                            'Non-Generalizable'] * 2,
+                                            'Accuracy': [self.full_id_acc,
+                                                         self.full_ood_acc,
+                                                         self.full_base_acc,
                                                          self.full_generalizable_acc,
                                                          self.full_non_generalizable_acc,
+                                                         self.partial_id_acc,
+                                                         self.partial_ood_acc,
                                                          self.partial_base_acc,
                                                          self.partial_generalizable_acc,
                                                          self.partial_non_generalizable_acc]})

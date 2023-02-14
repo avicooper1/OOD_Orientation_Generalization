@@ -36,9 +36,14 @@ def process_job_i(a):
         shutil.rmtree(Result.results_dir(exp_data)[0])
         if args.delete_results:
             return
-    Result.from_job_i(args.project_path, args.storage_path, job_i)
-    # except:
-    #     print(f'Generating result with job_i {job_i} failed')
+    try:
+        Result.from_job_i(args.project_path, args.storage_path, job_i)
+    except Exception as e:
+        print(f'Generating result with job_i {job_i} failed')
+        print('ExpData:\t', exp_data)
+        print(e)
+        exit(-1)
+        
 
 
 if __name__ == '__main__':
@@ -77,5 +82,5 @@ if __name__ == '__main__':
             for job_i in tqdm(pool.imap_unordered(process_job_i, ((job_i, args) for exp_num in args.nums for job_i in range(exp_num * jobs_per_num, (exp_num + 1) * jobs_per_num))), total=len(args.nums) * jobs_per_num):
                 if job_i is not None:
                     remaining_jobs.append(job_i)
-        print(remaining_jobs)
+        print(','.join(str(i) for i in remaining_jobs))
             

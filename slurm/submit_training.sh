@@ -1,9 +1,8 @@
 #!/bin/bash
 #SBATCH --time 20:00:00
-#SBATCH --array=[680-919]
+#SBATCH --array=[72,117,776,873,908,942]
 #SBATCH -c 4
 #SBATCH --mem=80G
-
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=any-A100
 #SBATCH --output=/home/avic/om2/logs/train/R_%A_%a.out

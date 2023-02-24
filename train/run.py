@@ -3,7 +3,7 @@ from torch.backends.cudnn import benchmark
 from torch.nn import Linear, Conv2d
 import timm
 from cornet import CORnet_S
-from torch.optim import Adam
+from torch.optim import Adam, SGD
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.nn import CrossEntropyLoss
 import sys
@@ -62,6 +62,8 @@ if __name__ == '__main__':
 	from utils.dataset import RotationDataset
 	from utils.persistent_data_class import ExpData
 
+	COLLECT_FOR_DEEPHYS = False
+
 	EXP_DATA = ExpData.from_job_i(args.project_path, args.storage_path, args.job_id, create_exp=True)
 
 	with open(EXP_DATA.log, 'a') if not args.log_to_console else nullcontext(sys.stdout) as out:
@@ -88,14 +90,14 @@ if __name__ == '__main__':
 
 			model.cuda()
 
-			optimizer = Adam(model.parameters(), lr=0.01)
+			optimizer = Adam(model.parameters(), lr=0.01) #SGD(model.parameters(), lr=0.01)
 			scheduler = ExponentialLR(optimizer, gamma=0.98)
 
 			model_objects = ModelObjects(EXP_DATA, model, optimizer, scheduler)
 
 			train_or_evaluate = 'train'
 			if EXP_DATA.complete:
-				if not EXP_DATA.eval_data.full_validation_activations.on_disk():
+				if not EXP_DATA.eval_data.full_validation_activations.on_disk() or COLLECT_FOR_DEEPHYS:
 					print("Training has already completed, but activations were not saved. Collecting activations")
 					train_or_evaluate = 'evaluate'
 				else:
@@ -115,7 +117,7 @@ if __name__ == '__main__':
 			if train_or_evaluate == 'train':
 				train(model_objects, dataset, loss, EXP_DATA)
 			else:
-				evaluate(model_objects, dataset, loss, EXP_DATA)
+				evaluate(model_objects, dataset, loss, EXP_DATA, COLLECT_FOR_DEEPHYS)
 			EXP_DATA.complete = True
 			EXP_DATA.save()
 			print('Completed Training')

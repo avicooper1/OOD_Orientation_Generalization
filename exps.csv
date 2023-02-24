@@ -46,7 +46,7 @@ resnet18,fc,plane,plane,32,,hole,CE,FALSE,TRUE
 densenet121,classifier,plane,plane,32,,α,CE,
 densenet121,classifier,plane,plane,32,,β,CE,
 densenet121,classifier,plane,plane,32,,γ,CE,
-densenet121,classifier,plane,plane,32,,holeCE,,
+densenet121,classifier,plane,plane,32,,hole,CE,,
 # ViT with plane
 vit_base_patch16_224,head,plane,plane,32,,α,CE,
 vit_base_patch16_224,head,plane,plane,32,,β,CE,
@@ -74,8 +74,6 @@ resnet18,fc,plane,plane,32,,α,CE,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,β,CE,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,γ,CE,FALSE,FALSE,FALSE,TRUE
 resnet18,fc,plane,plane,32,,hole,CE,FALSE,FALSE,FALSE,TRUE
-# some tests with contrastive loss
-resnet18,fc,plane,plane,32,,α,Contrastive
-resnet18,fc,plane,plane,32,,β,Contrastive
-resnet18,fc,plane,plane,32,,γ,Contrastive
-resnet18,fc,plane,plane,32,,hole,Contrastive
+vit_base_patch16_224,head,plane,plane,32,,α,CE,
+vit_base_patch8_224,head,plane,plane,32,,α,CE,
+resnet18,fc,plane,plane,32,,α,CE,

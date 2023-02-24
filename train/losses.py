@@ -24,5 +24,5 @@ class MyContrastiveLoss(Module):
 
 		pair_indexes = stack([pair_distance(index, label, class_map) for index, label in enumerate(labels)])
 		sum_square = square(pre_projection_activations - pre_projection_activations[pair_indexes]).sum(dim=1)
-		distance = where(sum_square == 0, 0.00001, sum_square).sqrt().sum()
+		distance = where(sum_square == 0, 0.000000001, sum_square).sqrt().sum()
 		return self.cross_entropy_loss(post_projection_activations, labels) + (self.temp * distance)

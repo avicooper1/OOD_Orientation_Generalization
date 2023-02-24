@@ -24,7 +24,6 @@ class ProjectJSONEncoder(json.JSONEncoder):
 			return {PDO_KEY: [type(o).__name__, o.file_path]}
 		if isinstance(o, PersistentDataClass):
 			return
-		# return {PDC_KEY: [type(o).__name__, o.file_path]}
 		return super().default(o)
 
 
@@ -222,6 +221,9 @@ class ExpData(PersistentDataClass):
 
 		self.eval_dir = os.path.join(self.dir, 'eval')
 		os.makedirs(self.eval_dir, exist_ok=True)
+
+		if self.model_type == 'vit_base_patch8_224':
+			self.batch_size = 16
 
 	def finish_init(self):
 		self.training_frame = AnnotationFile(self.frames_dir, 'training', storage_path=self.path)

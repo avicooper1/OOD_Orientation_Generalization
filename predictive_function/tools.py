@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import torch
 from scipy import linalg
 from tqdm.contrib.concurrent import process_map
 from scipy.spatial.transform import Rotation as R
@@ -93,6 +94,11 @@ def get_pf(num_cubelets, free_axis, hole):
 
 def sigmoid(arr, a, b):
     return 1 / (1 + np.exp((-arr * a) + b))
+
+
+def sigmoid_cp(arr, a, b):
+    import cupy as cp
+    return 1 / (1 + cp.exp((-arr * a) + b))
 
 
 def sigmoid_on_pf(pf, free_axis):

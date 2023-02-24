@@ -2,54 +2,27 @@ import os
 from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
+from itertools import product
 from utils.persistent_data_class import PersistentDataClass, ExpData
 from utils.persistent_data_object import Arr
 from utils.tools import get_base_mask
-from predictive_function.tools import pf_func_path, sigmoid_on_pf
+from predictive_function.tools import pf_func_path, sigmoid
+import warnings
+from pathlib import Path
 
 
 def corr(arr1, arr2):
-    try:
-        return float(np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1])
-    except:
-        return None
+    assert np.sum(np.isnan(arr1)) == 0
+    assert np.sum(np.isnan(arr2)) == 0
+    if np.std(arr1) == 0 or np.std(arr2) == 0:
+        return 0
+    return float(np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1])
 
 
 def inv_sel_score(pre_act, pre_mask, post_act, post_mask):
-    
-    # return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
-    #                             out=np.full(np.broadcast(pre_act, post_act).shape, 0.0),
-    #                             where=((post_act + pre_act) != 0)))
-    
     return 1 - np.abs(np.divide((post_act - pre_act), (post_act + pre_act),
                                 out=np.full(np.broadcast(pre_act, post_act).shape, np.nan),
                                 where=((post_act + pre_act) != 0) & (pre_mask | post_mask)))
-
-def calc_selectivity(pre_act, pre_mask, post_act, post_mask):
-    expanded_pre_act = pre_act[np.newaxis]
-    expanded_post_act = post_act[:,np.newaxis]
-    score = inv_sel_score(expanded_pre_act, None, expanded_post_act, None)
-    return np.average(score, weights=expanded_pre_act + expanded_post_act + 0.0000000000001, axis=1)
-   
-#     # score = inv_sel_score(pre_act[np.newaxis], pre_mask[np.newaxis], post_act[:, np.newaxis], post_mask[:, np.newaxis])
-#     # print(np.nanmax(score, axis=(1, 2)).shape)
-#     # return np.nanmean(np.nanmax(score, axis=(1, 2)))
-
-#     # diffs = np.abs(pre_act[np.newaxis] - post_act[:, np.newaxis])
-#     # 
-#     # return 1 - np.divide(diffs.mean(axis=(0, 1)), diffs.max(axis=(0, 1)), where=diffs.max(axis=(0, 1))!=0)
-
-#     pre_maxes = pre_act.argmax(axis=0, keepdims=True)
-#     post_maxes = post_act.argmax(axis=0, keepdims=True)
-#     score = inv_sel_score(np.take_along_axis(pre_act, pre_maxes, axis=0),
-#                          np.take_along_axis(pre_mask, pre_maxes, axis=0),
-#                          np.take_along_axis(post_act, post_maxes, axis=0),
-#                          np.take_along_axis(post_mask, post_maxes, axis=0))
-#     print(np.mean(np.isnan(score)))
-#     return np.nanmean(score)
-    return inv_sel_score(pre_act[np.newaxis], pre_mask[np.newaxis], post_act[:, np.newaxis], post_mask[:, np.newaxis], False)
-    # return np.mean(pre_mask[np.newaxis] & post_mask[:, np.newaxis]) / np.mean(pre_mask[np.newaxis] | post_mask[:, np.newaxis])
-    # return np.mean(np.sqrt(pre_mask[np.newaxis] * post_mask[:, np.newaxis]) / (pre_mask[np.newaxis] + post_mask[:, np.newaxis]))
 
 
 @dataclass
@@ -84,11 +57,82 @@ class Result(PersistentDataClass):
     ae_corr: float = None
     all_corr: float = None
 
+    a_component_fit_params: list = field(default_factory=lambda: [])
+    e_component_fit_params: list = field(default_factory=lambda: [])
+
     selectivity: dict = field(default_factory=lambda: {})
     invariance: dict = field(default_factory=lambda: {})
 
     partial_heatmap: Arr = None
     base_mask: Arr = None
+    full_heatmap: Arr = None
+
+    def full_only_frame(self):
+        return self.exp_data.full_validation_frame.df[
+            self.exp_data.full_validation_frame.df.instance_name.isin(self.exp_data.full_instances)]
+
+    def generate_heatmaps(self, save=False):
+
+        if self.partial_heatmap and os.path.exists(self.partial_heatmap.file_path):
+            return
+
+        self.partial_heatmap = Arr(self.d, 'partial_heatmap')
+        self.partial_heatmap.arr = np.zeros(self.exp_data.dataset_resolution ** 3)
+
+        self.base_mask = Arr(self.d, 'base_mask')
+        self.base_mask.arr = np.zeros(self.exp_data.dataset_resolution ** 3).astype(bool)
+
+        for base, frame, correct in ((True, self.exp_data.partial_base_frame,
+                                      self.exp_data.eval_data.partial_base_correct),
+                                     (False, self.exp_data.partial_ood_frame,
+                                      self.exp_data.eval_data.partial_ood_correct)):
+            for flat_cubelet_i, indices in frame.df.groupby('image_idx', sort=False).indices.items():
+
+                self.partial_heatmap.arr[flat_cubelet_i] = correct.arr[indices].mean()
+
+                if base:
+                    self.base_mask.arr[np.where(self.partial_heatmap.arr)] = True
+
+        self.partial_heatmap.arr = self.partial_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+        self.base_mask.arr = self.base_mask.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+
+        self.full_heatmap = Arr(self.d, 'full_heatmap')
+        self.full_heatmap.arr = np.full(self.exp_data.dataset_resolution ** 3, np.nan)
+
+        for flat_cubelet_i, indices in self.full_only_frame().groupby('image_idx', sort=False).indices.items():
+            self.full_heatmap.arr[flat_cubelet_i] = self.exp_data.eval_data.full_validation_correct.arr[indices].mean()
+
+        self.full_heatmap.arr = self.full_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+
+        if save:
+            self.partial_heatmap.dump()
+            self.base_mask.dump()
+            self.full_heatmap.dump()
+
+    def fit(self, fitted_a, fitted_e, args, correlations, pbar):
+
+        import cupy as cp
+
+        self.generate_heatmaps()
+
+        flattened_heatmap = cp.array(self.partial_heatmap.arr).astype(cp.float32).flatten()
+        flattened_heatmap_variance = flattened_heatmap - cp.mean(flattened_heatmap)
+        flattened_heatmap_square_sum = cp.sqrt(cp.sum(flattened_heatmap_variance ** 2))
+
+        for (a, _), (b, _), (c, _) in product(*[enumerate(arg) for arg in args]):
+            model_variance = fitted_a[a, b, c][cp.newaxis, cp.newaxis, cp.newaxis] + fitted_e
+            correlations[a, b, c] = (model_variance @ flattened_heatmap_variance) / (flattened_heatmap_square_sum * cp.sqrt(cp.sum(model_variance ** 2, axis=3)))
+            pbar.update(1)
+
+        # The 'a' parameter elementwise multiplies the component. If 'a' is zero for both the a and e components, the
+        # predictive model will be 0 everywhere. We thus ignore correlations computed for wherever this is the case
+        correlations[:, 0, :, :, 0] = cp.nan
+        fit_parameters = np.unravel_index(cp.nanargmax(correlations).item(), (len(args[0]), len(args[1]), len(args[2]), len(args[0]), len(args[1]), len(args[2])))
+
+        self.a_component_fit_params = [args[x][fit_parameters[x]].item() for x in range(3)]
+        self.e_component_fit_params = [args[x][fit_parameters[3 + x]].item() for x in range(3)]
+
+        self.save()
 
     def initial_init(self):
 
@@ -97,84 +141,108 @@ class Result(PersistentDataClass):
         self.num_fully_seen = self.exp_data.num_fully_seen
         self.run = self.exp_data.run
         self.free_axis = self.exp_data.free_axis
-        self.category = self.exp_data.full_category if self.exp_data.full_category == self.exp_data.partial_category else f'{self.exp_data.full_category} -> {self.exp_data.partial_category}'
+        self.category = (self.exp_data.full_category
+                         if self.exp_data.full_category == self.exp_data.partial_category
+                         else f'{self.exp_data.full_category} -> {self.exp_data.partial_category}')
         self.model_type = self.exp_data.model_type
         self.loss = self.exp_data.loss
-        
-        try:
-            self.full_id_acc = float(self.exp_data.eval_data.full_validation_correct.arr.mean())
-            self.partial_id_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
-            self.partial_ood_acc = float(self.exp_data.eval_data.partial_ood_correct.arr.mean())
-        except:
-            exit()
-            
-        pred_func = np.load(pf_func_path(self.free_axis, self.project_path))
-        pred_func_sigmoid = sigmoid_on_pf(pred_func, self.free_axis)
 
-        match self.free_axis:
-            case 'α':
-                pred_func_thresh = 0.15
-            case 'β':
-                pred_func_thresh = 0.2
-            case 'γ':
-                pred_func_thresh = 0.12
-            case 'hole':
-                pred_func_thresh = 0.01
+    def fitted_model(self):
+        assert self.a_component_fit_params
 
-        pred_func_mask = np.max(pred_func_sigmoid, axis=0) > pred_func_thresh
+        predictive_model = np.load(pf_func_path(self.free_axis, self.project_path))
+
+        a_arg_pow, a_arg_a, a_arg_b = self.a_component_fit_params
+        a_arg_a += 0.68965517
+        e_arg_pow, e_arg_a, e_arg_b = self.e_component_fit_params
+        e_arg_a += 0.68965517
+
+        a = sigmoid(predictive_model[0] ** a_arg_pow, a_arg_a, a_arg_b)
+        af = sigmoid(predictive_model[2] ** a_arg_pow, a_arg_a, a_arg_b)
+
+        e = sigmoid(predictive_model[1] ** e_arg_pow, e_arg_a, e_arg_b)
+        ef = sigmoid(predictive_model[3] ** e_arg_pow, e_arg_a, e_arg_b)
+
+        fitted_predictive_model = a + af + e + ef
+
+        return a, af, e, ef, fitted_predictive_model
+
+    def get_generalizable_mask(self, fitted_predictive_model_pre_calc):
+
+        if self.num_fully_seen == 40:
+            fitted_predictive_model = fitted_predictive_model_pre_calc
+        else:
+            parts = list(Path(self.exp_data.eval_dir).parts)
+            parts[-3] = '40_fully_seen'
+            results_path = os.path.join(Path(*parts), 'results', 'results.json')
+            if not os.path.exists(results_path):
+                return None
+            result40 = Result(None, results_path, None, None)
+            if not result40.a_component_fit_params:
+                return None
+            fitted_predictive_model = result40.fitted_model()[-1]
+
+        return fitted_predictive_model > np.min(fitted_predictive_model) + ((np.max(fitted_predictive_model) - np.min(fitted_predictive_model)) / 10)
+
+    def run_analysis(self):
+
+        self.full_id_acc = float(self.exp_data.eval_data.full_validation_correct.arr.mean())
+        self.partial_id_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
+        self.partial_ood_acc = float(self.exp_data.eval_data.partial_ood_correct.arr.mean())
+
+        a, af, e, ef, fitted_predictive_model = self.fitted_model()
+
+        self.generate_heatmaps()
+
+        generalizable_mask = self.get_generalizable_mask(fitted_predictive_model)
+
+        if generalizable_mask is None:
+            return
 
         self.exp_data.partial_ood_frame.df['generalizable'] = np.isin(self.exp_data.partial_ood_frame.df.image_idx.values,
-                                                                      np.where(pred_func_mask.flatten())[0])
-
-        self.exp_data.full_validation_frame.df['base'] = get_base_mask(self.exp_data.full_validation_frame.df, self.exp_data.base_orientations)
+                                                                      np.where(generalizable_mask.flatten())[0])
+        self.exp_data.full_validation_frame.df['base'] = get_base_mask(self.exp_data.full_validation_frame.df,
+                                                                       self.exp_data.base_orientations)
         self.exp_data.full_validation_frame.df['generalizable'] = np.isin(self.exp_data.full_validation_frame.df.image_idx.values,
-                                                                          np.where(pred_func_mask.flatten())[0])
-
-        self.partial_heatmap = Arr(self.d, 'partial_heatmap')
-        self.partial_heatmap.arr = np.zeros(self.exp_data.dataset_resolution ** 3)
-
-        self.base_mask = Arr(self.d, 'base_mask')
-        self.base_mask.arr = np.zeros(self.exp_data.dataset_resolution ** 3).astype(bool)
-
-        for base, frame, correct in ((True, self.exp_data.partial_base_frame, self.exp_data.eval_data.partial_base_correct),
-                                     (False, self.exp_data.partial_ood_frame, self.exp_data.eval_data.partial_ood_correct)):
-            for flat_cubelet_i, indices in frame.df.groupby('image_idx', sort=False).indices.items():
-                self.partial_heatmap.arr[flat_cubelet_i] = correct.arr[indices].mean()
-
-            if base:
-                self.base_mask.arr[np.where(self.partial_heatmap.arr)] = True
-
-        self.partial_heatmap.arr = self.partial_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
-        self.base_mask.arr = self.base_mask.arr.reshape((self.exp_data.dataset_resolution,) * 3)
-
-        self.full_heatmap = Arr(self.d, 'full_heatmap')
-        self.full_heatmap.arr = np.empty(self.exp_data.dataset_resolution ** 3)
-        self.full_heatmap.arr[:] = np.nan
-
-        full_only_frame = self.exp_data.full_validation_frame.df[self.exp_data.full_validation_frame.df.instance_name.isin(self.exp_data.full_instances)]
-
-        for flat_cubelet_i, indices in full_only_frame.groupby('image_idx', sort=False).indices.items():
-            self.full_heatmap.arr[flat_cubelet_i] = self.exp_data.eval_data.full_validation_correct.arr[indices].mean()
-        self.full_heatmap.arr = self.full_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+                                                                          np.where(generalizable_mask.flatten())[0])
 
         self.partial_base_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
-        self.partial_generalizable_acc = float(self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[self.exp_data.partial_ood_frame.df.generalizable].index].mean())
-        self.partial_non_generalizable_acc = float(self.exp_data.eval_data.partial_ood_correct.arr[self.exp_data.partial_ood_frame.df[~self.exp_data.partial_ood_frame.df.generalizable].index].mean())
+        self.partial_generalizable_acc = float(self.exp_data.eval_data.partial_ood_correct.arr[
+                                                   self.exp_data.partial_ood_frame.df[
+                                                       self.exp_data.partial_ood_frame.df.generalizable].index].mean())
+        self.partial_non_generalizable_acc = float(self.exp_data.eval_data.partial_ood_correct.arr[
+                                                       self.exp_data.partial_ood_frame.df[
+                                                           ~self.exp_data.partial_ood_frame.df.generalizable].index].mean())
 
-        self.full_base_acc = float(self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.base].index].mean())
-        self.full_generalizable_acc = float(self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[full_only_frame.generalizable & ~full_only_frame.base].index].mean())
-        self.full_non_generalizable_acc = float(self.exp_data.eval_data.full_validation_correct.arr[full_only_frame[~full_only_frame.generalizable & ~full_only_frame.base].index].mean())
-        
-        self.unif_corr, self.a_corr, self.e_corr, self.ae_corr, self.all_corr, self.id_corr = (corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape)),
-                                                                                 corr(self.partial_heatmap.arr, pred_func_sigmoid[0]),
-                                                                                 corr(self.partial_heatmap.arr, pred_func_sigmoid[1]),
-                                                                                 corr(self.partial_heatmap.arr,
-                                                                                      np.max(pred_func_sigmoid[[0, 1]], axis=0)),
-                                                                                 corr(self.partial_heatmap.arr,
-                                                                                      np.max(pred_func_sigmoid, axis=0)),
-                                                                                corr(np.nanmean(self.full_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(1,3,5)), np.mean(self.partial_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(1, 3, 5))))
+        full_only_frame = self.full_only_frame()
 
-        max_act = np.stack([np.abs(activation.arr).max(axis=0) for activation in self.exp_data.eval_data.activations]).max(axis=0)
+        self.full_base_acc = float(self.exp_data.eval_data.full_validation_correct.arr[
+                                       full_only_frame[full_only_frame.base].index].mean())
+        self.full_generalizable_acc = float(self.exp_data.eval_data.full_validation_correct.arr[
+                                                full_only_frame[full_only_frame.generalizable &
+                                                                ~full_only_frame.base].index].mean())
+        self.full_non_generalizable_acc = float(self.exp_data.eval_data.full_validation_correct.arr[
+                                                    full_only_frame[~full_only_frame.generalizable &
+                                                                    ~full_only_frame.base].index].mean())
+
+        self.unif_corr = corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape))
+        self.a_corr = corr(self.partial_heatmap.arr, a)
+        self.e_corr = corr(self.partial_heatmap.arr, e)
+        self.ae_corr = corr(self.partial_heatmap.arr, a + e)
+        self.all_corr = corr(self.partial_heatmap.arr, fitted_predictive_model)
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', 'Mean of empty slice')
+            downsampled_full_heatmap = np.nanmean(self.full_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(0, 2, 4))
+        nan_elements = np.stack(np.where(np.isnan(downsampled_full_heatmap))).T
+        for nan_element in nan_elements:
+            downsampled_full_heatmap[nan_element] = np.nanmean(downsampled_full_heatmap[max(nan_element[0] - 1, 0):
+                                                                                        nan_element[0] + 2,
+                                                              max(nan_element[1] - 1, 0): nan_element[1] + 2,
+                                                              max(nan_element[2] - 1, 0): nan_element[2] + 2])
+        self.id_corr = corr(downsampled_full_heatmap,
+                            np.mean(self.partial_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(0, 2, 4)))
+
+        max_act = np.stack([np.abs(act.arr).max(axis=0) for act in self.exp_data.eval_data.activations]).max(axis=0)
 
         for i, activation in enumerate(self.exp_data.eval_data.activations):
             activation.arr = np.divide(activation.arr, max_act, out=np.zeros(activation.arr.shape), where=max_act != 0)
@@ -187,11 +255,9 @@ class Result(PersistentDataClass):
                                                     self.exp_data.full_validation_frame,
                                                     self.exp_data.eval_data.full_validation_activations)
 
-
         pb_acts = self.get_base_activations(self.exp_data.partial_instances,
                                             self.exp_data.partial_base_frame,
                                             self.exp_data.eval_data.partial_base_activations)
-
 
         fb_acts = self.get_base_activations(self.exp_data.full_instances,
                                             self.exp_data.full_validation_frame,
@@ -204,16 +270,16 @@ class Result(PersistentDataClass):
                 'pg': pg_acts,
                 'pn': pn_acts}
 
-        # TODO If we use networks that don't only have ReLU activations, we might have negative normalized values here. This should be changed such that the absolute value is above some threshold
+        # TODO If we use networks that don't only have ReLU activations, we might have negative normalized values here.
+        #  This should be changed such that the absolute value is above some threshold
 
         sorted_acts = np.sort(np.hstack([v.flatten() for v in acts.values()]))
         threshold = sorted_acts[int(sorted_acts.shape[0] * 0.95)]
 
-        # thresh_mask = {k: np.sort(v.flatten())[int(v.flatten().shape[0] * 0.99)] for k, v in acts.items()}
         thresh_mask = {k: v > threshold for k, v in acts.items()}
 
         self.selectivity = {k: v.mean() for k, v in thresh_mask.items()}
-        
+
         self.invariance = {f'{k1}_{k2}': np.nanmean(inv_sel_score(acts[k1],
                                                                   thresh_mask[k1],
                                                                   acts[k2],
@@ -221,43 +287,9 @@ class Result(PersistentDataClass):
                                                                                                    ('fb', 'fn'),
                                                                                                    ('pb', 'pg'),
                                                                                                    ('pb', 'pn')]}
-        
-        # def only_one(a, b, t):
-        #     a_any_inv_mask = np.any(~np.isnan(a), axis=0)
-        #     b_any_inv_mask = np.any(~np.isnan(b), axis=0)
-        #     if t == 'first':
-        #         return a_any_inv_mask & ~b_any_inv_mask
-        #     if t == 'second':
-        #         return ~a_any_inv_mask & b_any_inv_mask
-        #     if t == 'both':
-        #         return a_any_inv_mask & b_any_inv_mask
-        #     if t == 'neither':
-        #         return ~a_any_inv_mask & ~b_any_inv_mask
-        
-        # self.invariance = {k: np.nanmean(v) for k, v in inv.items()}
-        # self.invariance_only_partial = {k: np.nanmean(inv[k][:, only_one(inv['fb_fg'], inv[k], 'second')]) for k in ['pb_pg', 'pb_pn']}
-        # self.invariance_only_full = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'first')]) for k in ['pb_pg', 'pb_pn']}
-        # self.invariance_both = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'both')]) for k in ['pb_pg', 'pb_pn']}
-        # self.invariance_neither = {k: np.nanmean(inv['fb_fg'][:, only_one(inv['fb_fg'], inv[k], 'neithersl')]) for k in ['pb_pg', 'pb_pn']}
-    
-        
-        # self.mixed_selectivity = {f'{k1}_{k2}':
-        #                           np.nanmean(calc_selectivity(acts[k1],
-        #                                            thresh_mask[k1],
-        #                                            acts[k2],
-        #                                            thresh_mask[k2])) for k1, k2 in [('fb', 'pb'),
-        #                                                                            ('fg', 'pg'),
-        #                                                                            ('fn', 'pn')]}
-#         self.acts = acts
-#         self.thresh_mask = thresh_mask
-        
-#         import pickle 
-#         with open('/home/avic/result2', 'wb') as f:
-#             pickle.dump(self, f)
 
-        self.partial_heatmap.dump()
-        self.base_mask.dump()
-        self.full_heatmap.dump()
+        self.save()
+        del self.exp_data
 
     @staticmethod
     def get_ood_activations(instance_list, frame, activations):
@@ -295,10 +327,10 @@ class Result(PersistentDataClass):
     @property
     def accuracy_frame(self):
         return self.finalize_results_frame({'Instance': (['Full'] * 5) + (['Partial'] * 5),
-                                            'Orientation': ['In Distribution', 
+                                            'Orientation': ['In Distribution',
                                                             'Out of Distribution',
-                                                            'Base', 
-                                                            'Generalizable', 
+                                                            'Base',
+                                                            'Generalizable',
                                                             'Non-Generalizable'] * 2,
                                             'Accuracy': [self.full_id_acc,
                                                          self.full_ood_acc,
@@ -326,7 +358,8 @@ class Result(PersistentDataClass):
                                                             self.ae_corr,
                                                             self.all_corr]})
 
-    def k_to_instance(self, k):
+    @staticmethod
+    def k_to_instance(k):
         match k:
             case 'f':
                 return 'Full'
@@ -334,7 +367,8 @@ class Result(PersistentDataClass):
                 return 'Partial'
         raise Exception(f'{k} does not match any Instance Set')
 
-    def k_to_orientation(self, k):
+    @staticmethod
+    def k_to_orientation(k):
         match k:
             case 'b':
                 return 'Base'
@@ -357,51 +391,21 @@ class Result(PersistentDataClass):
         return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
                                             'Orientation': [self.k_to_orientation(k[4]) for k in keys],
                                             'Invariance': [self.invariance[k] for k in keys]})
-    
-    @property
-    def invariance_only_partial_frame(self):
-        keys = self.invariance_only_partial.keys()
-        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
-                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
-                                            'Invariance': [self.invariance_only_partial[k] for k in keys]})
-    
-    @property
-    def invariance_only_full_frame(self):
-        keys = self.invariance_only_full.keys()
-        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
-                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
-                                            'Invariance': [self.invariance_only_full[k] for k in keys]})
-    
-    @property
-    def invariance_both_frame(self):
-        keys = self.invariance_both.keys()
-        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
-                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
-                                            'Invariance': [self.invariance_both[k] for k in keys]})
-    
-    @property
-    def invariance_neither_frame(self):
-        keys = self.invariance_neither.keys()
-        return self.finalize_results_frame({'Instance': [self.k_to_instance(k[0]) for k in keys],
-                                            'Orientation': [self.k_to_orientation(k[4]) for k in keys],
-                                            'Invariance': [self.invariance_neither[k] for k in keys]})
-
-    @property
-    def mixed_selectivity_frame(self):
-        keys = self.mixed_selectivity.keys()
-        return self.finalize_results_frame({'Orientation': [self.k_to_orientation(k[1])  for k in keys],
-                                            'Mixed Selectivity': [self.mixed_selectivity[k] for k in keys]})
 
     @classmethod
     def from_job_i(cls, project_path, storage_path, job_i, num_runs=5):
         exp_data = ExpData.from_job_i(project_path, storage_path, job_i, num_runs)
         d, f = cls.results_dir(exp_data)
-        return cls(d, f, exp_data, project_path)
+        r = cls(d, f, exp_data, project_path)
+        r.exp_data = exp_data
+        return r
 
     @classmethod
     def from_exp_data(cls, exp_data, project_path):
         d, f = cls.results_dir(exp_data)
-        return cls(d, f, exp_data, project_path)
+        r = cls(d, f, exp_data, project_path)
+        r.exp_data = exp_data
+        return r
 
     @classmethod
     def results_dir(cls, exp_data):

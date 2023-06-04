@@ -4,6 +4,8 @@ import torch
 from scipy import linalg
 from tqdm.contrib.concurrent import process_map
 from scipy.spatial.transform import Rotation as R
+from torch.multiprocessing import Pool
+from itertools import chain
 import sys
 sys.path.append('..')
 from utils.tools import *
@@ -92,8 +94,144 @@ def get_pf(num_cubelets, free_axis, hole):
     return A, E, A_flipped, E_flipped
 
 
-def sigmoid(arr, a, b):
-    return 1 / (1 + np.exp((-arr * a) + b))
+class FitterModule(torch.nn.Module):
+
+    def __init__(self, num_components):
+        super().__init__()
+        self.weights = torch.nn.init.xavier_uniform_(torch.nn.parameter.Parameter(torch.rand(3, num_components, 1)))
+
+    def corr_distance(self, vx, y):
+        vy = y - y.mean()
+
+        return 1 - (torch.sum(vx * vy, axis=0) / (torch.sqrt(torch.sum(vx ** 2)) * torch.sqrt(torch.sum(vy ** 2, axis=0))))
+
+    def forward(self, pm, hm_var):
+        step1 = pm ** self.weights[0]
+        step2 = step1 * self.weights[1]
+        step3 = step2 + self.weights[2]
+        return self.corr_distance(hm_var, torch.sum(torch.sigmoid(step3), axis=0))
+
+def corr(arr1, arr2):
+    assert np.sum(np.isnan(arr1)) == 0
+    assert np.sum(np.isnan(arr2)) == 0
+    if np.std(arr1) == 0 or np.std(arr2) == 0:
+        return 0
+    return float(np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1])
+
+def worker_init(num_epochs_init, train_predictive_model_init, val_predictive_model_init, train_heatmap_var_init, val_heatmap_var_init):
+    global num_epochs, train_predictive_model, val_predictive_model, train_heatmap_var, val_heatmap_var
+    num_epochs = num_epochs_init
+    train_predictive_model = train_predictive_model_init
+    val_predictive_model = val_predictive_model_init
+    train_heatmap_var = train_heatmap_var_init
+    val_heatmap_var = val_heatmap_var_init
+
+def driver(args):
+    
+    # ipm, (num_components,
+    #       component_list,
+    #       (num_epochs,
+    #        train_predictive_model,
+    #        val_predictive_model,
+    #        train_heatmap_var,
+    #        val_heatmap_var)) = args
+    ipm, (num_components,
+          component_list) = args
+
+    # global num_epochs, train_predictive_model, val_predictive_model, train_heatmap_var, val_heatmap_var
+
+    correlations = torch.full((2, num_epochs), np.nan)
+
+    min_train_cost = torch.tensor(torch.inf)
+    min_val_cost = torch.tensor(torch.inf)
+    min_epoch = -1
+    saved_weights = None
+
+    tpm = train_predictive_model[component_list]
+    vpm = val_predictive_model[component_list]
+
+    model = FitterModule(num_components).cuda()
+    optimizer = torch.optim.SGD(model.parameters(), lr=10)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, threshold=1e-3, min_lr=1e-7, patience=100)
+
+    for epoch in range(num_epochs):
+        optimizer.zero_grad()
+        cost = model(tpm, train_heatmap_var)
+        cost_data = cost.data
+        correlations[0, epoch] = cost_data
+        with torch.no_grad():
+            val_cost = model(vpm, val_heatmap_var)
+        correlations[1, epoch] = val_cost.data
+        if cost < (min_train_cost - 0.001):
+            bad_epoch_counter = 0
+            saved_weights = model.weights.detach().clone()
+            min_train_cost = cost_data
+            min_val_cost = val_cost
+            min_epoch = epoch
+        elif (epoch - 2000) > min_epoch:
+            break
+        cost.backward()
+        optimizer.step()
+        scheduler.step(val_cost)
+        
+    return ipm, correlations, min_train_cost, min_val_cost, saved_weights
+
+def fit_model(result, predictive_model, pbar=None, num_runs=5, num_epochs=5_000):
+
+    partial_heatmap, base_mask, full_heatmap = result.generate_heatmaps()
+    
+    # partial_heatmap.arr[partial_heatmap.arr <= 0.101] = 0
+
+    partial_heatmap_wo_base = partial_heatmap.arr.flatten()#[~base_mask.arr]
+
+    train_val_split = np.full(partial_heatmap_wo_base.shape, False, bool)
+    train_val_split[np.random.choice(len(train_val_split), len(train_val_split) // 2, replace=False)] = True
+
+    train_heatmap = partial_heatmap_wo_base[train_val_split]
+    train_heatmap_var = torch.tensor(train_heatmap - train_heatmap.mean(), dtype=torch.float32).cuda()#.share_memory_()
+    val_heatmap = partial_heatmap_wo_base[~train_val_split]
+    val_heatmap_var = torch.tensor(val_heatmap - val_heatmap.mean(), dtype=torch.float32).cuda()#.share_memory_()
+
+    predictive_model_wo_base = predictive_model#[:, ~base_mask.arr.flatten()]
+    train_predictive_model = predictive_model_wo_base[:, train_val_split]
+    val_predictive_model = predictive_model_wo_base[:, ~train_val_split]
+
+    def result_list():
+        return [[] for _ in range(5)]
+
+    all_correlations = result_list()
+    all_min_train_cost = result_list()
+    all_min_val_cost = result_list()
+    all_saved_weights = result_list()
+
+        
+    with Pool(4, initializer=worker_init, initargs=(num_epochs, train_predictive_model, val_predictive_model,
+                                                    train_heatmap_var, val_heatmap_var)) as p:
+            for (ipm, correlations, min_train_cost, min_val_cost,
+                 saved_weights) in p.imap_unordered(driver,
+                                                    chain(*[enumerate(zip([1, 1, 2, 2, 4],
+                                                                          [0, 1, [0, 1], [2, 3], [0, 1, 2, 3]]))
+                                                            for _ in range(num_runs)])):
+
+                all_correlations[ipm].append(correlations)
+                all_min_train_cost[ipm].append(min_train_cost)
+                all_min_val_cost[ipm].append(min_val_cost)
+                all_saved_weights[ipm].append(saved_weights)
+                pbar.update()
+            
+    # return all_correlations, all_min_train_cost, all_min_val_cost, all_saved_weights
+
+    result.predictive_model_params = [all_saved_weights[i][torch.argmin(torch.stack(all_min_val_cost[i]))].tolist() for i in range(5)]
+    filtered_min_val_cost = [1 - torch.min(torch.stack(all_min_val_cost[i])).item() for i in range(5)]
+
+    result.unif_corr = corr(partial_heatmap.arr, np.random.sample(partial_heatmap.arr.shape))
+    result.a_corr, result.e_corr, result.ae_corr, result.f_ae_corr, result.all_corr = filtered_min_val_cost
+
+    result.save()
+
+
+def sigmoid(arr):
+    return 1 / (1 + np.exp((-arr)))
 
 
 def sigmoid_cp(arr, a, b):

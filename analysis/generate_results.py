@@ -1,14 +1,10 @@
-import os
-import shutil
 import argparse
 import sys
 from tqdm import tqdm
 from tqdm.contrib.concurrent import process_map
-from multiprocessing import Pool
-from numpy import argmax
 import numpy as np
-import pandas as pd
-from itertools import chain, product
+import torch
+from itertools import chain
 
 
 if __name__ == '__main__':
@@ -18,8 +14,10 @@ if __name__ == '__main__':
     parser.add_argument('--nums',
                         type=int,
                         nargs='+',
-                        help='experiment numbers',
-                        required=True)
+                        default=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 
+                                 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 42, 43, 44, 45, 46, 
+                                 47, 48, 49, 55, 56, 57, 58],
+                        help='experiment numbers')
     parser.add_argument('-fm', '--fit_model', nargs='?', default=False, const=True)
     parser.add_argument('-ra', '--run_analysis', nargs='?', default=False, const=True)
     parser.add_argument('-ow', '--overwrite_results', nargs='?', default=False, const=True)
@@ -28,12 +26,12 @@ if __name__ == '__main__':
     
     sys.path.insert(0, args.project_path)
     
-    from predictive_function.tools import sigmoid_cp, pf_func_path
+    from predictive_function.tools import sigmoid_cp, pf_func_path, fit_model
     from utils.persistent_data_class import ExpData
     from analysis.result import Result
     
     jobs_per_num = 4 * 5  # Number of num_fully_seen times number of runs
-    job_list = list(chain(*[range(jobs_per_num * n, (jobs_per_num * (n + 1)) - 1) for n in args.nums]))
+    job_list = list(chain(*[range(jobs_per_num * n, (jobs_per_num * (n + 1))) for n in args.nums]))
     
     remaining_train = []
     remaining_activations = []
@@ -41,6 +39,15 @@ if __name__ == '__main__':
     remaining_fits = {}
     remaining_analysis_nums = []
     remaining_analysis = []
+
+    if args.fit_model:
+        torch.multiprocessing.set_start_method('spawn')
+
+    if args.overwrite_results:
+        if args.fit_model:
+            response = input('About to delete fitted parameters. These can quite long to regenerate. Are you sure you want to continue? Type YES to continue: ')
+            if response != 'YES':
+                exit()
 
     
     for job_i in tqdm(job_list, desc='Checking analysis statuses', file=sys.stdout):
@@ -69,13 +76,13 @@ if __name__ == '__main__':
 
         if args.overwrite_results:
             if args.fit_model:
-                result.a_component_fit_params = []
+                result.predictive_model_params = []
             if args.run_analysis:
                 result.full_id_acc = None
             result.save()
             continue
 
-        if not result.a_component_fit_params:
+        if not result.predictive_model_params:
             remaining_fit_nums.append(result.num)
             if result.free_axis in remaining_fits:
                 remaining_fits[result.free_axis].append(result)
@@ -96,55 +103,29 @@ if __name__ == '__main__':
             
     if args.fit_model and len(remaining_fits.keys()) > 0:
 
-        import cupy as cp
-
         for free_axis in remaining_fits:
 
             print(f'Fitting experiments for {free_axis} model')
 
-            predictive_model = cp.load(pf_func_path(free_axis, args.project_path)).reshape(4, -1)
+            predictive_model = torch.tensor(np.load(pf_func_path(free_axis, args.project_path)).reshape(4, -1)).cuda()
 
-            power_args = cp.linspace(1, 20, 20)
-            sigmoid_args = cp.linspace(0, 20, 20)
+            num_runs = 5
+            num_epochs = 10_000
 
-            fitted_a_component = cp.zeros(
-                (len(power_args), len(sigmoid_args), len(sigmoid_args), predictive_model.shape[1]), cp.float32)
-            fitted_e_component = cp.zeros(
-                (len(power_args), len(sigmoid_args), len(sigmoid_args), predictive_model.shape[1]), cp.float32)
-
-            for (c1_pow_i, c1_pow), (c1_x_i, c1_x), (c1_y_i, c1_y) in tqdm(
-                    product(enumerate(power_args), enumerate(sigmoid_args), enumerate(sigmoid_args)),
-                    total=len(power_args) * (len(sigmoid_args) ** 2),
-                    file=sys.stdout):
-
-                idx = c1_pow_i, c1_x_i, c1_y_i
-
-                a = sigmoid_cp(predictive_model[0] ** c1_pow, c1_x, c1_y)
-                af = sigmoid_cp(predictive_model[2] ** c1_pow, c1_x, c1_y)
-                fitted_a_component[idx] = (a - cp.mean(a)) + (af - cp.mean(af))
-
-                e = sigmoid_cp(predictive_model[1] ** c1_pow, c1_x, c1_y)
-                ef = sigmoid_cp(predictive_model[3] ** c1_pow, c1_x, c1_y)
-                fitted_e_component[idx] = (e - cp.mean(e)) + (ef - cp.mean(ef))
-
-            correlations = cp.zeros((len(power_args), len(sigmoid_args), len(sigmoid_args), len(power_args),
-                                     len(sigmoid_args), len(sigmoid_args)), cp.float32)
-
-            with tqdm(total=len(remaining_fits[free_axis]) * len(power_args) * (len(sigmoid_args) ** 2),
+            with tqdm(total=len(remaining_fits[free_axis]) * 4 * num_runs,
                       desc='Fitting',
                       file=sys.stdout) as pbar:
                 for result in remaining_fits[free_axis]:
-                    result.fit(fitted_a_component, fitted_e_component,
-                               [power_args, sigmoid_args, sigmoid_args],
-                               correlations, pbar)
+                    fit_model(result, predictive_model, pbar)
+
 
     def run_analysis(r):
         r.run_analysis()
 
     if args.run_analysis and len(remaining_analysis) > 0:
         np.seterr(all='raise')
-        process_map(run_analysis, remaining_analysis, max_workers=16)
-        # with tqdm(total=len(remaining_analysis), desc='Running analysis', file=sys.stdout) as pbar:
-        #     for _ in map(run_analysis, remaining_analysis):
-        #         pbar.update(1)
+        # process_map(run_analysis, remaining_analysis, max_workers=16)
+        with tqdm(total=len(remaining_analysis), desc='Running analysis', file=sys.stdout) as pbar:
+            for _ in map(run_analysis, remaining_analysis):
+                pbar.update(1)
             

@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
 			train_or_evaluate = 'train'
 			if EXP_DATA.complete:
-				if not EXP_DATA.eval_data.full_validation_activations.on_disk() or COLLECT_FOR_DEEPHYS:
+				if (sum([not a.on_disk() for a in EXP_DATA.eval_data.activations + EXP_DATA.eval_data.corrects]) > 0) or COLLECT_FOR_DEEPHYS:
 					print("Training has already completed, but activations were not saved. Collecting activations")
 					train_or_evaluate = 'evaluate'
 				else:

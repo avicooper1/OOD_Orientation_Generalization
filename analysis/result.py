@@ -6,17 +6,10 @@ from itertools import product
 from utils.persistent_data_class import PersistentDataClass, ExpData
 from utils.persistent_data_object import Arr
 from utils.tools import get_base_mask
-from predictive_function.tools import pf_func_path, sigmoid
+from predictive_function.tools import pf_func_path, corr
 import warnings
 from pathlib import Path
-
-
-def corr(arr1, arr2):
-    assert np.sum(np.isnan(arr1)) == 0
-    assert np.sum(np.isnan(arr2)) == 0
-    if np.std(arr1) == 0 or np.std(arr2) == 0:
-        return 0
-    return float(np.corrcoef(arr1.flatten(), arr2.flatten())[0, 1])
+from scipy.special import expit
 
 
 def inv_sel_score(pre_act, pre_mask, post_act, post_mask):
@@ -38,8 +31,6 @@ class Result(PersistentDataClass):
     run: int = None
     free_axis: str = None
     category: str = None
-    model_type: str = None
-    loss: str = None
     full_id_acc: float = None
     full_ood_acc: float = None
     partial_id_acc: float = None
@@ -55,10 +46,10 @@ class Result(PersistentDataClass):
     a_corr: float = None
     e_corr: float = None
     ae_corr: float = None
+    f_ae_corr: float = None
     all_corr: float = None
 
-    a_component_fit_params: list = field(default_factory=lambda: [])
-    e_component_fit_params: list = field(default_factory=lambda: [])
+    predictive_model_params: list = field(default_factory=lambda: [])
 
     selectivity: dict = field(default_factory=lambda: {})
     invariance: dict = field(default_factory=lambda: {})
@@ -76,11 +67,11 @@ class Result(PersistentDataClass):
         if self.partial_heatmap and os.path.exists(self.partial_heatmap.file_path):
             return
 
-        self.partial_heatmap = Arr(self.d, 'partial_heatmap')
-        self.partial_heatmap.arr = np.zeros(self.exp_data.dataset_resolution ** 3)
+        partial_heatmap = Arr(self.d, 'partial_heatmap')
+        partial_heatmap.arr = np.zeros(self.exp_data.dataset_resolution ** 3)
 
-        self.base_mask = Arr(self.d, 'base_mask')
-        self.base_mask.arr = np.zeros(self.exp_data.dataset_resolution ** 3).astype(bool)
+        base_mask = Arr(self.d, 'base_mask')
+        base_mask.arr = np.zeros(self.exp_data.dataset_resolution ** 3).astype(bool)
 
         for base, frame, correct in ((True, self.exp_data.partial_base_frame,
                                       self.exp_data.eval_data.partial_base_correct),
@@ -88,51 +79,33 @@ class Result(PersistentDataClass):
                                       self.exp_data.eval_data.partial_ood_correct)):
             for flat_cubelet_i, indices in frame.df.groupby('image_idx', sort=False).indices.items():
 
-                self.partial_heatmap.arr[flat_cubelet_i] = correct.arr[indices].mean()
+                partial_heatmap.arr[flat_cubelet_i] = correct.arr[indices].mean()
 
                 if base:
-                    self.base_mask.arr[np.where(self.partial_heatmap.arr)] = True
+                    base_mask.arr[np.where(partial_heatmap.arr)] = True
 
-        self.partial_heatmap.arr = self.partial_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
-        self.base_mask.arr = self.base_mask.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+        partial_heatmap.arr = partial_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+        base_mask.arr = base_mask.arr.reshape((self.exp_data.dataset_resolution,) * 3)
 
-        self.full_heatmap = Arr(self.d, 'full_heatmap')
-        self.full_heatmap.arr = np.full(self.exp_data.dataset_resolution ** 3, np.nan)
+        full_heatmap = Arr(self.d, 'full_heatmap')
+        full_heatmap.arr = np.full(self.exp_data.dataset_resolution ** 3, np.nan)
 
         for flat_cubelet_i, indices in self.full_only_frame().groupby('image_idx', sort=False).indices.items():
-            self.full_heatmap.arr[flat_cubelet_i] = self.exp_data.eval_data.full_validation_correct.arr[indices].mean()
+            full_heatmap.arr[flat_cubelet_i] = self.exp_data.eval_data.full_validation_correct.arr[indices].mean()
 
-        self.full_heatmap.arr = self.full_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
+        full_heatmap.arr = full_heatmap.arr.reshape((self.exp_data.dataset_resolution,) * 3)
 
         if save:
+            self.partial_heatmap = partial_heatmap
             self.partial_heatmap.dump()
+
+            self.base_mask = base_mask
             self.base_mask.dump()
+
+            self.full_heatmap = full_heatmap
             self.full_heatmap.dump()
 
-    def fit(self, fitted_a, fitted_e, args, correlations, pbar):
-
-        import cupy as cp
-
-        self.generate_heatmaps()
-
-        flattened_heatmap = cp.array(self.partial_heatmap.arr).astype(cp.float32).flatten()
-        flattened_heatmap_variance = flattened_heatmap - cp.mean(flattened_heatmap)
-        flattened_heatmap_square_sum = cp.sqrt(cp.sum(flattened_heatmap_variance ** 2))
-
-        for (a, _), (b, _), (c, _) in product(*[enumerate(arg) for arg in args]):
-            model_variance = fitted_a[a, b, c][cp.newaxis, cp.newaxis, cp.newaxis] + fitted_e
-            correlations[a, b, c] = (model_variance @ flattened_heatmap_variance) / (flattened_heatmap_square_sum * cp.sqrt(cp.sum(model_variance ** 2, axis=3)))
-            pbar.update(1)
-
-        # The 'a' parameter elementwise multiplies the component. If 'a' is zero for both the a and e components, the
-        # predictive model will be 0 everywhere. We thus ignore correlations computed for wherever this is the case
-        correlations[:, 0, :, :, 0] = cp.nan
-        fit_parameters = np.unravel_index(cp.nanargmax(correlations).item(), (len(args[0]), len(args[1]), len(args[2]), len(args[0]), len(args[1]), len(args[2])))
-
-        self.a_component_fit_params = [args[x][fit_parameters[x]].item() for x in range(3)]
-        self.e_component_fit_params = [args[x][fit_parameters[3 + x]].item() for x in range(3)]
-
-        self.save()
+        return partial_heatmap, base_mask, full_heatmap
 
     def initial_init(self):
 
@@ -144,33 +117,39 @@ class Result(PersistentDataClass):
         self.category = (self.exp_data.full_category
                          if self.exp_data.full_category == self.exp_data.partial_category
                          else f'{self.exp_data.full_category} -> {self.exp_data.partial_category}')
-        self.model_type = self.exp_data.model_type
-        self.loss = self.exp_data.loss
 
     def fitted_model(self):
-        assert self.a_component_fit_params
+        assert self.predictive_model_params
 
         predictive_model = np.load(pf_func_path(self.free_axis, self.project_path))
 
-        a_arg_pow, a_arg_a, a_arg_b = self.a_component_fit_params
-        a_arg_a += 0.68965517
-        e_arg_pow, e_arg_a, e_arg_b = self.e_component_fit_params
-        e_arg_a += 0.68965517
+        model_params = np.array(self.predictive_model_params[4])
 
-        a = sigmoid(predictive_model[0] ** a_arg_pow, a_arg_a, a_arg_b)
-        af = sigmoid(predictive_model[2] ** a_arg_pow, a_arg_a, a_arg_b)
+        return np.sum(expit(((predictive_model ** model_params[0, :, np.newaxis, np.newaxis]) \
+                            * model_params[1, :, np.newaxis, np.newaxis]) + model_params[2, :, np.newaxis, np.newaxis]), axis=0)
 
-        e = sigmoid(predictive_model[1] ** e_arg_pow, e_arg_a, e_arg_b)
-        ef = sigmoid(predictive_model[3] ** e_arg_pow, e_arg_a, e_arg_b)
 
-        fitted_predictive_model = a + af + e + ef
+#     def get_generalizable_mask(self, fitted_predictive_model_pre_calc):
 
-        return a, af, e, ef, fitted_predictive_model
+#         if self.num_fully_seen == 40:
+#             fitted_predictive_model = fitted_predictive_model_pre_calc
+#         else:
+#             parts = list(Path(self.exp_data.eval_dir).parts)
+#             parts[-3] = '40_fully_seen'
+#             results_path = os.path.join(Path(*parts), 'results', 'results.json')
+#             if not os.path.exists(results_path):
+#                 return None
+#             result40 = Result(None, results_path, None, None)
+#             if not result40.predictive_model_params:
+#                 return None
+#             fitted_predictive_model = result40.fitted_model()
 
-    def get_generalizable_mask(self, fitted_predictive_model_pre_calc):
+#         return fitted_predictive_model > np.min(fitted_predictive_model) + ((np.max(fitted_predictive_model) - np.min(fitted_predictive_model)) / 10)
+
+    def get_generalizable_mask(self, passed_fitted_predictive_model):
 
         if self.num_fully_seen == 40:
-            fitted_predictive_model = fitted_predictive_model_pre_calc
+            fitted_predictive_model = passed_fitted_predictive_model
         else:
             parts = list(Path(self.exp_data.eval_dir).parts)
             parts[-3] = '40_fully_seen'
@@ -178,9 +157,9 @@ class Result(PersistentDataClass):
             if not os.path.exists(results_path):
                 return None
             result40 = Result(None, results_path, None, None)
-            if not result40.a_component_fit_params:
+            if not result40.predictive_model_params:
                 return None
-            fitted_predictive_model = result40.fitted_model()[-1]
+            fitted_predictive_model = result40.fitted_model()
 
         return fitted_predictive_model > np.min(fitted_predictive_model) + ((np.max(fitted_predictive_model) - np.min(fitted_predictive_model)) / 10)
 
@@ -190,9 +169,9 @@ class Result(PersistentDataClass):
         self.partial_id_acc = float(self.exp_data.eval_data.partial_base_correct.arr.mean())
         self.partial_ood_acc = float(self.exp_data.eval_data.partial_ood_correct.arr.mean())
 
-        a, af, e, ef, fitted_predictive_model = self.fitted_model()
+        fitted_predictive_model = self.fitted_model()
 
-        self.generate_heatmaps()
+        partial_heatmap, base_mask, full_heatmap = self.generate_heatmaps()
 
         generalizable_mask = self.get_generalizable_mask(fitted_predictive_model)
 
@@ -225,14 +204,9 @@ class Result(PersistentDataClass):
                                                     full_only_frame[~full_only_frame.generalizable &
                                                                     ~full_only_frame.base].index].mean())
 
-        self.unif_corr = corr(self.partial_heatmap.arr, np.random.sample(self.partial_heatmap.arr.shape))
-        self.a_corr = corr(self.partial_heatmap.arr, a)
-        self.e_corr = corr(self.partial_heatmap.arr, e)
-        self.ae_corr = corr(self.partial_heatmap.arr, a + e)
-        self.all_corr = corr(self.partial_heatmap.arr, fitted_predictive_model)
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Mean of empty slice')
-            downsampled_full_heatmap = np.nanmean(self.full_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(0, 2, 4))
+            downsampled_full_heatmap = np.nanmean(full_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(0, 2, 4))
         nan_elements = np.stack(np.where(np.isnan(downsampled_full_heatmap))).T
         for nan_element in nan_elements:
             downsampled_full_heatmap[nan_element] = np.nanmean(downsampled_full_heatmap[max(nan_element[0] - 1, 0):
@@ -240,12 +214,15 @@ class Result(PersistentDataClass):
                                                               max(nan_element[1] - 1, 0): nan_element[1] + 2,
                                                               max(nan_element[2] - 1, 0): nan_element[2] + 2])
         self.id_corr = corr(downsampled_full_heatmap,
-                            np.mean(self.partial_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(0, 2, 4)))
+                            np.mean(partial_heatmap.arr.reshape(2, 16, 2, 16, 2, 16), axis=(0, 2, 4)))
 
         max_act = np.stack([np.abs(act.arr).max(axis=0) for act in self.exp_data.eval_data.activations]).max(axis=0)
+        max_act_nonzero = max_act != 0
 
-        for i, activation in enumerate(self.exp_data.eval_data.activations):
-            activation.arr = np.divide(activation.arr, max_act, out=np.zeros(activation.arr.shape), where=max_act != 0)
+        for activation in self.exp_data.eval_data.activations:
+            activation.arr = np.divide(activation.arr[:, max_act_nonzero],
+                                       max_act[max_act_nonzero],
+                                       out=np.zeros((activation.arr.shape[0], np.sum(max_act_nonzero))))
 
         pg_acts, pn_acts = self.get_ood_activations(self.exp_data.partial_instances,
                                                     self.exp_data.partial_ood_frame,
@@ -274,7 +251,8 @@ class Result(PersistentDataClass):
         #  This should be changed such that the absolute value is above some threshold
 
         sorted_acts = np.sort(np.hstack([v.flatten() for v in acts.values()]))
-        threshold = sorted_acts[int(sorted_acts.shape[0] * 0.95)]
+        threshold = sorted_acts[int(sorted_acts.shape[0] * 0.8)]
+        max_act = sorted_acts[-1]
 
         thresh_mask = {k: v > threshold for k, v in acts.items()}
 
@@ -318,17 +296,31 @@ class Result(PersistentDataClass):
         frame['Instances Fully Seen'] = self.num_fully_seen
         frame['Run'] = self.run
         frame['Num'] = self.num
-        frame['Model Type'] = self.model_type
-        frame['Loss'] = self.loss
-        frame['Free Axis'] = self.free_axis
-        frame['Category'] = self.category
+        frame['Model Type'] = self.exp_data.model_type
+        frame['Half Data'] = self.exp_data.half_data
+        frame['Pretrained'] = self.exp_data.pretrained
+        frame['Augmented'] = self.exp_data.augment
+        frame['Loss'] = self.exp_data.loss
+        frame['Free Axis'] = self.free_axis if self.free_axis != 'hole' else "α'"
+        match self.category:
+            case 'plane':
+                category = 'Airplane'
+            case 'car':
+                category = 'Car'
+            case 'SM':
+                category = 'SM'
+            case 'plane -> SM':
+                category = 'Airplane\n↓\nSM'
+            case 'SM -> plane':
+                category = 'SM\n↓\nAirplane'
+        frame['Category'] = category
         return frame
 
     @property
     def accuracy_frame(self):
-        return self.finalize_results_frame({'Instance': (['Full'] * 5) + (['Partial'] * 5),
-                                            'Orientation': ['In Distribution',
-                                                            'Out of Distribution',
+        return self.finalize_results_frame({'Instance': (['Fully Seen'] * 5) + (['Partially Seen'] * 5),
+                                            'Orientation': ['In-Distribution',
+                                                            'Out-of-Distribution',
                                                             'Base',
                                                             'Generalizable',
                                                             'Non-Generalizable'] * 2,
@@ -347,24 +339,26 @@ class Result(PersistentDataClass):
     def correlation_frame(self):
         return self.finalize_results_frame({'Predictive Model Component': ['Random Uniform',
                                                                            'In-Distribution',
-                                                                           'Small Angle',
-                                                                           'In Plane',
-                                                                           'Small Angle + In Plane',
+                                                                           'Small-Angle',
+                                                                           'In-Plane',
+                                                                           'Small-Angle + In-Plane',
+                                                                           'Silhouette',
                                                                            'All Components'],
                                             'Correlation': [self.unif_corr,
                                                             self.id_corr,
                                                             self.a_corr,
                                                             self.e_corr,
                                                             self.ae_corr,
+                                                            self.f_ae_corr,
                                                             self.all_corr]})
 
     @staticmethod
     def k_to_instance(k):
         match k:
             case 'f':
-                return 'Full'
+                return 'Fully Seen'
             case 'p':
-                return 'Partial'
+                return 'Partially Seen'
         raise Exception(f'{k} does not match any Instance Set')
 
     @staticmethod

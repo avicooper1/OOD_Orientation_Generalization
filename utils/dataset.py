@@ -161,6 +161,12 @@ class RotationDataset:
 				self.exp_data.training_frame.df = pd.concat([full_training_frame, self.exp_data.partial_base_frame.df])
 				# self.exp_data.training_frame.df = pd.concat([full_training_frame])
 
+		# 2 TODOs: 1) change this to the training frame for all, 2) make sure weights are correct
+		if self.exp_data.half_data:
+			full_training_frame.groupby('instance_name').apply(lambda group: group.sample(frac=0.25)).droplevel(
+				'instance_name', axis=0)
+			pass
+
 		for frame in self.exp_data.frames:
 			frame.dump()
 

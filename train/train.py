@@ -170,10 +170,10 @@ def train(model_objects, dataset, criterion, exp_data):
 
 	epoch_corrects, epoch_activations, dataloader_index = setup_activation_collection(model_objects, dataset, exp_data)
 
-	num_training_batches = 1000 if not exp_data.half_data else 500
+	num_training_batches = 1000
 	total_num_batches = num_training_batches + sum([len(l) for l in dataset.data_loaders[1:]])
 
-	for epoch in tqdm(range(exp_data.epochs_completed, exp_data.max_epochs if not exp_data.half_data else 100),
+	for epoch in tqdm(range(exp_data.epochs_completed, exp_data.max_epochs),
 					  desc='Training epochs completed',
 					  file=sys.stdout):
 		with tqdm(total=total_num_batches, leave=False, file=sys.stdout) as pbar:

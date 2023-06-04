@@ -98,7 +98,11 @@ class Arr(PersistentDataObject):
     def loader(self):
         if self.compress:
             with gzip.GzipFile(self.file_path, 'r') as f:
-                return np.load(f)
+                try:
+                    return np.load(f)
+                except:
+                    print(f'Error reading corrupted file: {self.file_path}')
+                    exit(-1)
         else:
             return np.load(self.file_path)
 

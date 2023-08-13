@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=[3,4,9,22,23]
+#SBATCH --array=[7]
 #SBATCH -t 07:00:00
 #SBATCH -n 1
 #SBATCH --cpus-per-task=32
@@ -12,4 +12,4 @@
 #SBATCH --partition=normal
 
 hostname
-~/om2/software/blender/blender -b -noaudio -P ~/OOD_Orientation_Generalization/render/render.py ~/OOD_Orientation_Generalization ~/om2/OODOG/ 32 lamp ${SLURM_ARRAY_TASK_ID}
+~/om2/software/blender/blender -b -noaudio -P ~/OOD_Orientation_Generalization/render/render.py ~/OOD_Orientation_Generalization ~/om2/OODOG/ 32 plane ${SLURM_ARRAY_TASK_ID}

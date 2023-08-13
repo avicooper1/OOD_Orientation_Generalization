@@ -5,6 +5,37 @@ For a demo jupyter notebook:
 
 This is a collection of tools to run experiments and evaluations for a project studying the ability of DCNN's to generalize to unseen poses of 3D objects.
 
+### Pipeline
+The code available in this repository is grouped into several categories:
+- data generation: all experiments are done with synthetic ShapeNet objects rendered into image stimuli with Blender
+- DNN training
+- analysis: the various analyses employed, including both standard and novel approaches
+
+# Location of data
+All data, including stimuli datasets, trained models and collected behavioral responses and neural activities, can be found at the following Harvard Dataverse dataset: TBD. To use this data, please save it locally and extract all files. The location of this data will be referred to as `PATH_TO_DATA`. Alternatively, you can generate all data and train all models. The codebase expects both datasets and experiment files to be located in a single directory.
+
+The location of this repository will be referred to as `PATH_TO_REPO`
+
+# Data Generation
+
+where `OBJECT_CLASS` is the class of object to be generated. This value can be one of [`plane`, `car`, `lamp`, `SM`]. And where `INSTANCE_INDEX` is the integer instance index of the object of the class to be generated. This value can be in the range [0,50).
+
+Blender needs to be installed. We refer to its installation location as `BLENDER_PATH`
+```shell
+BLENDER_PATH -b -noaudio -P PATH_TO_REPO/render/render.py PATH_TO_REPO PATH_TO_DATA 32 OBJECT_CLASS INSTANCE_INDEX
+```
+
+After generating data, there are several more steps:
+1. Check that all images were rendered
+2. Compress the images (Blender introduces some artifacts, including pixel values of 1 (max value 255) in the black background, where the lowest pixel value for the objects is ~70. Setting these pixels allows for much greater compression without loss of quality)
+3. Combine all images into a single numpy array which is saved to disk (with borders trimmed, and data type of uint8 to save storage). This format allows for faster loading to memory (as only one file needs to be loaded, rather than many small files)
+
+If any of these steps cannot be completed, the program will exit with a message. After every step is completed, the dataset will be updated with a flag that the step has been completed. This allows for tracking of dataset completion
+
+```bash
+python3 PATH_TO_REPO/render/finalize_render.py PATH_TO_DATA 32 OBJECT_CLASS -sd INSTANCE_INDEX
+```
+
 ## Directory Tree
 ```
 Rotation-Generalization/

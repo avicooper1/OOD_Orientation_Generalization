@@ -263,6 +263,5 @@ author={Avi Cooper and Daniel Harari and Tomotake Sasaki and Spandan Madan and H
 journal={Transactions on Machine Learning Research},
 issn={2835-8856},
 year={2025},
-url={https://openreview.net/forum?id=4wBQTZVSHU},
-note={}
+url={https://openreview.net/forum?id=4wBQTZVSHU}
 }

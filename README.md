@@ -254,6 +254,7 @@ Transfer from one object to another
 Transfer from ImageNet
 One of two backbones (Resnet, CorNet)
 
+## Citation
 ```bibtex
 @article{
 cooper2025emergent,

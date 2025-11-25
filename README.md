@@ -254,4 +254,14 @@ Transfer from one object to another
 Transfer from ImageNet
 One of two backbones (Resnet, CorNet)
 
-        
+```bibtex
+@article{
+cooper2025emergent,
+title={Emergent Neural Network Mechanisms for Generalization to Objects in Novel Orientations},
+author={Avi Cooper and Daniel Harari and Tomotake Sasaki and Spandan Madan and Hanspeter Pfister and Pawan Sinha and Xavier Boix},
+journal={Transactions on Machine Learning Research},
+issn={2835-8856},
+year={2025},
+url={https://openreview.net/forum?id=4wBQTZVSHU},
+note={}
+}
